@@ -4,6 +4,9 @@ import json
 import os
 
 import redis
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from services.workers.execution.task_runner import execute
 from shared.models import TaskPayload

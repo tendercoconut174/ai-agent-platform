@@ -1,5 +1,9 @@
 """Orchestrator FastAPI service."""
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from typing import Any, Dict
 
 from fastapi import FastAPI

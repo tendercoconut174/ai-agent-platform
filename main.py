@@ -1,6 +1,11 @@
 """Entry point for ai-agent-platform."""
 
 import argparse
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import subprocess
 import sys
 

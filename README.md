@@ -59,9 +59,21 @@ uv run python main.py gateway
 
 **3. Test**
 ```bash
+# Default (JSON, auto mode)
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"message": "research climate change"}'
+
+# Casual chat (direct response, no planning)
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "hello!", "mode": "chat"}'
+
+# Output as PDF or Excel (returns file for download)
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "extract ICC T20 world cup winners", "output_format": "xl"}' \
+  -o result.xlsx
 ```
 
 ## Running with Docker
@@ -81,6 +93,13 @@ docker compose up -d redis orchestrator worker gateway
 | OPENAI_MODEL | gpt-4o-mini | OpenAI model for agents |
 
 **Web search:** General and research agents use ddgs (Bing/DuckDuckGo metasearch) for real web search (no API key needed).
+
+### Request options
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `output_format` | json | `json`, `pdf`, or `xl` (Excel). When pdf/xl, response includes `content_base64`, `content_type`, `filename`. |
+| `mode` | auto | `auto` (classify), `chat` (direct chat, no planning), or `task` (full planning flow). |
 
 ## Project Structure
 

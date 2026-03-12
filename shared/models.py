@@ -9,6 +9,14 @@ class MessageRequest(BaseModel):
     """Request payload for the /message endpoint."""
 
     message: str = Field(..., description="User message or task description")
+    output_format: str = Field(
+        default="json",
+        description="Output format: json (default), pdf, or xl (Excel)",
+    )
+    mode: str = Field(
+        default="auto",
+        description="Mode: auto (classify), chat (direct chat), or task (full planning)",
+    )
 
 
 class TaskPayload(BaseModel):
@@ -61,6 +69,8 @@ class OrchestratorRequest(BaseModel):
     """Request to the orchestrator."""
 
     message: str = Field(..., description="User message or goal")
+    output_format: str = Field(default="json", description="Output format: json, pdf, or xl")
+    mode: str = Field(default="auto", description="Mode: auto, chat, or task")
 
 
 class OrchestratorResponse(BaseModel):
@@ -68,6 +78,9 @@ class OrchestratorResponse(BaseModel):
 
     result: str = Field(..., description="Final result delivered to user")
     workflow_id: Optional[str] = Field(default=None, description="Workflow identifier")
+    content_base64: Optional[str] = Field(default=None, description="Base64-encoded file when output_format is pdf or xl")
+    content_type: Optional[str] = Field(default=None, description="MIME type of file (application/pdf, application/vnd.openxmlformats...)")
+    filename: Optional[str] = Field(default=None, description="Suggested filename for download")
 
 
 # --- Agent-to-Supervisor communication ---

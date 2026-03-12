@@ -24,8 +24,12 @@ def orchestrate_endpoint(payload: OrchestratorRequest) -> Dict[str, Any]:
         Formatted result for user.
     """
     try:
-        result, workflow_id = orchestrate(payload.message)
-        return deliver(result, workflow_id)
+        result, workflow_id = orchestrate(
+            payload.message,
+            mode=payload.mode,
+            output_format=payload.output_format,
+        )
+        return deliver(result, workflow_id, output_format=payload.output_format)
     except Exception as e:
         logger.exception("Orchestrator failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

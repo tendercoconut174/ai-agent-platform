@@ -39,7 +39,8 @@ def wait_for_result(task_id: str, timeout: int = 30) -> Optional[Dict[str, Any]]
         Result dict from worker, or None on timeout.
     """
     result_key = f"result:{task_id}"
-    _, result_json = redis_client.brpop(result_key, timeout=timeout)
-    if result_json is None:
+    popped = redis_client.brpop(result_key, timeout=timeout)
+    if popped is None:
         return None
+    _, result_json = popped
     return json.loads(result_json)

@@ -1,4 +1,4 @@
-"""Research agent: OpenAI agent with web search for real research."""
+"""General agent: OpenAI agent with web search tool for real data."""
 
 import os
 import warnings
@@ -18,7 +18,9 @@ def _create_web_search_tool():
 
     @tool
     def web_search(query: str, max_results: int = 10) -> str:
-        """Search the web for real information. Use for research, facts, current data."""
+        """Search the web for real, current information. Use this for price comparisons,
+        product info, news, or any data that needs to be fetched from the internet.
+        Returns: title, snippet, and URL for each result."""
         from shared.tools.web_search import web_search as _web_search
 
         results = _web_search(query=query, max_results=max_results)
@@ -31,38 +33,41 @@ def _create_web_search_tool():
 
 
 def _run_with_openai(task: str) -> TaskResult:
-    """Use OpenAI agent with web search for research."""
+    """Use OpenAI agent with web search tool."""
     llm = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         temperature=0,
     )
     tools = [_create_web_search_tool()]
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt="Use web_search for research. Provide concise summaries with sources.",
+    system = (
+        "You have access to web_search. ALWAYS use it for price comparisons, product info, or current data. "
+        "For price comparisons: run separate searches per retailer (e.g. 'iPhone 15 Amazon', 'iPhone 15 Flipkart'). "
+        "Format results as a markdown table when asked for tabular data. Use real search results only."
     )
-    result = agent.invoke({"messages": [{"role": "user", "content": f"Research and summarize: {task}"}]})
+    agent = create_agent(model=llm, tools=tools, system_prompt=system)
+    result = agent.invoke({"messages": [{"role": "user", "content": task}]})
     content = ""
     messages = result.get("messages") or []
     for msg in reversed(messages):
         if hasattr(msg, "content") and msg.content and getattr(msg, "type", "") == "ai":
             content = msg.content
             break
-    return TaskResult(result=content or f"Research result for {task}")
+    return TaskResult(result=content or f"Result for: {task}")
 
 
 def _run_fallback(task: str) -> TaskResult:
     """Fallback when OpenAI not configured."""
-    return TaskResult(result=f"Research result for {task}")
+    return TaskResult(result=f"General task received. (Set OPENAI_API_KEY for LLM execution): {task}")
 
 
-def run_research_agent(task: str) -> TaskResult:
-    """Execute research agent (OpenAI) and return structured result.
+def run_general_agent(task: str) -> TaskResult:
+    """Execute general agent (OpenAI + web search) for any task.
+
+    Uses real web search for price comparisons, product info, etc.
 
     Args:
-        task: Research query or message.
+        task: Task message or query.
 
     Returns:
         Structured TaskResult from the agent.

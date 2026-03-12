@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "ddgs>=9.0.0",
     "fastapi>=0.135.1",
+    "httpx>=0.28.0",
     "langchain>=1.2.12",
+    "langchain-openai>=0.3.0",
     "langgraph>=1.1.1",
     "pydantic>=2.12.5",
     "redis>=7.3.0",
@@ -17,7 +20,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black>=26.3.1",
+    "httpx>=0.28.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
     "ruff>=0.15.5",
 ]

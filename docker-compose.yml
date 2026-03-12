@@ -1,26 +1,45 @@
 services:
 
   gateway:
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
     environment:
+      ORCHESTRATOR_URL: http://orchestrator:8001
       REDIS_HOST: redis
     ports:
       - "8000:8000"
     depends_on:
+      - orchestrator
       - redis
       - postgres
 
   orchestrator:
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
+    environment:
+      REDIS_HOST: redis
+    ports:
+      - "8001:8001"
     depends_on:
       - redis
       - postgres
 
   worker:
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: services/workers/Dockerfile

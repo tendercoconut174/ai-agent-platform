@@ -9,4 +9,4 @@ RUN uv sync
 
 COPY . .
 
-CMD ["uv", "run", "python", "services/orchestrator/orchestrator.py"]
+CMD ["uv", "run", "uvicorn", "services.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8001"]

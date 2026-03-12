@@ -1,9 +1,12 @@
+"""Worker service that consumes tasks from Redis and executes agents."""
+
+import json
 import os
 
 import redis
-import json
 
 from services.workers.execution.task_runner import execute
+from shared.models import TaskPayload
 
 redis_client = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
@@ -12,17 +15,14 @@ redis_client = redis.Redis(
 )
 
 while True:
+    _, task_json = redis_client.brpop("task_queue")
+    data = json.loads(task_json)
+    task = TaskPayload.model_validate(data)
 
-    _, task = redis_client.brpop("task_queue")
+    print("Processing task:", task.model_dump())
 
-    data = json.loads(task)
-
-    print("Processing task:", data)
-
-    result = execute(data)
+    result = execute(task)
 
     print("Result:", result)
 
-    task_id = data.get("task_id")
-    if task_id:
-        redis_client.rpush(f"result:{task_id}", json.dumps(result))
+    redis_client.rpush(f"result:{task.task_id}", json.dumps(result))

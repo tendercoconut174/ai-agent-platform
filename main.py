@@ -21,6 +21,23 @@ def run_worker() -> None:
     )
 
 
+def run_orchestrator(host: str = "0.0.0.0", port: int = 8001) -> None:
+    """Start the orchestrator service."""
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "services.orchestrator.main:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        check=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="ai-agent-platform",
@@ -35,6 +52,11 @@ def main() -> None:
 
     worker_parser = subparsers.add_parser("worker", help="Start the worker service")
     worker_parser.set_defaults(func=lambda args: run_worker())
+
+    orchestrator_parser = subparsers.add_parser("orchestrator", help="Start the orchestrator service")
+    orchestrator_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    orchestrator_parser.add_argument("--port", type=int, default=8001, help="Port to bind (default: 8001)")
+    orchestrator_parser.set_defaults(func=lambda args: run_orchestrator(args.host, args.port))
 
     args = parser.parse_args()
     args.func(args)

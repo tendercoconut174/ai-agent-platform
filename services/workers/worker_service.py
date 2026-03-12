@@ -1,9 +1,15 @@
+import os
+
 import redis
 import json
 
 from services.workers.execution.task_runner import execute
 
-redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    decode_responses=True,
+)
 
 while True:
 

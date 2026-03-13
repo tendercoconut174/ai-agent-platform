@@ -1,1 +1,1 @@
-"""Shared models and utilities."""
+"""Shared modules."""

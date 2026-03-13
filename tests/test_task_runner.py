@@ -1,4 +1,6 @@
-"""Unit tests for task runner."""
+"""Unit tests for async task runner."""
+
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -6,24 +8,50 @@ from services.workers.execution.task_runner import execute
 from shared.models import TaskPayload
 
 
+def _make_task(agent_type: str = "research", message: str = "test") -> TaskPayload:
+    return TaskPayload(
+        task_id="t1",
+        workflow_id="wf-1",
+        step_id="step-1",
+        agent_type=agent_type,
+        message=message,
+    )
+
+
 class TestExecute:
-    """Tests for execute function."""
+    """Tests for async execute function."""
 
-    def test_research_task_routes_to_agent(self) -> None:
-        """Route research task_type to research agent."""
-        task = TaskPayload(task_id="t1", message="research AI", task_type="research")
-        result = execute(task)
-        assert "research AI" in result["result"]
+    @pytest.mark.asyncio
+    @patch("services.workers.execution.task_runner.get_agent")
+    async def test_research_task_routes_to_agent(self, mock_get) -> None:
+        mock_get.return_value = AsyncMock(return_value="Researched: research AI")
+        task = _make_task(agent_type="research", message="research AI")
+        result = await execute(task)
+        mock_get.assert_called_once_with("research")
+        assert "Researched: research AI" == result["result"]
 
-    def test_task_type_routes_to_agent(self) -> None:
-        """Route by task_type to specialized agent."""
-        task = TaskPayload(task_id="t2", message="AI trends", task_type="research")
-        result = execute(task)
-        assert "AI trends" in result["result"]
+    @pytest.mark.asyncio
+    @patch("services.workers.execution.task_runner.get_agent")
+    async def test_analysis_task_routes_to_agent(self, mock_get) -> None:
+        mock_get.return_value = AsyncMock(return_value="Analyzed: AI trends")
+        task = _make_task(agent_type="analysis", message="AI trends")
+        result = await execute(task)
+        mock_get.assert_called_once_with("analysis")
+        assert "Analyzed: AI trends" == result["result"]
 
-    def test_general_task_routes_to_general_agent(self) -> None:
-        """Route general or unknown task_type to general agent."""
-        task = TaskPayload(task_id="t3", message="compare prices", task_type="general")
-        result = execute(task)
+    @pytest.mark.asyncio
+    @patch("services.workers.execution.task_runner.get_agent")
+    async def test_unknown_type_falls_back(self, mock_get) -> None:
+        mock_get.return_value = AsyncMock(return_value="Fallback: compare prices")
+        task = _make_task(agent_type="unknown", message="compare prices")
+        result = await execute(task)
+        mock_get.assert_called_once_with("unknown")
         assert "result" in result
-        assert "compare prices" in result["result"] or "General task" in result["result"]
+
+    @pytest.mark.asyncio
+    @patch("services.workers.execution.task_runner.get_agent")
+    async def test_result_includes_task_id(self, mock_get) -> None:
+        mock_get.return_value = AsyncMock(return_value="done")
+        task = _make_task()
+        result = await execute(task)
+        assert result["task_id"] == "t1"

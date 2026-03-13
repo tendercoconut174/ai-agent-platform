@@ -48,6 +48,10 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Logs
+logs/
+*.log
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,31 +1,70 @@
-"""Worker service that consumes tasks from Redis and executes agents."""
+"""Worker service – consumes tasks from Redis Streams and executes async agents."""
 
-import json
-import os
+import asyncio
+import logging
+import signal
+import traceback
 
-import redis
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from services.workers.execution.task_runner import execute
-from shared.models import TaskPayload
+from platform_queue.task_queue import ack_task, consume_task, publish_progress, push_result
+from services.agents.registry import get_agent
 
-redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-    decode_responses=True,
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("worker")
 
-while True:
-    _, task_json = redis_client.brpop("task_queue")
-    data = json.loads(task_json)
-    task = TaskPayload.model_validate(data)
+_shutdown = False
 
-    print("Processing task:", task.model_dump())
 
-    result = execute(task)
+def _handle_signal(sig, frame):
+    global _shutdown
+    logger.info("Shutdown signal received")
+    _shutdown = True
 
-    print("Result:", result)
 
-    redis_client.rpush(f"result:{task.task_id}", json.dumps(result))
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
+
+
+async def main():
+    logger.info("Worker starting...")
+    while not _shutdown:
+        item = consume_task(block_ms=5000)
+        if item is None:
+            continue
+
+        msg_id, task = item
+        task_id = task.get("task_id", "unknown")
+        workflow_id = task.get("workflow_id", "")
+        agent_type = task.get("agent_type", "research")
+        message = task.get("message", "")
+
+        logger.info("Processing task %s (agent=%s, workflow=%s)", task_id, agent_type, workflow_id)
+
+        publish_progress(workflow_id, {
+            "task_id": task_id, "agent_type": agent_type, "status": "running",
+        })
+
+        try:
+            agent_fn = get_agent(agent_type)
+            result_text = await agent_fn(message)
+            result = {"result": result_text, "error": None}
+            logger.info("Task %s completed (%d chars)", task_id, len(result_text))
+        except Exception as e:
+            logger.exception("Task %s failed: %s", task_id, e)
+            result = {"result": "", "error": traceback.format_exc()}
+
+        push_result(task_id, result)
+        ack_task(msg_id)
+
+        publish_progress(workflow_id, {
+            "task_id": task_id, "agent_type": agent_type, "status": "completed" if not result.get("error") else "failed",
+        })
+
+    logger.info("Worker shut down")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -4,18 +4,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from typing import Any, Dict
+from shared.logging_config import setup_logging
+
+setup_logging()
+
+import logging
 
 from fastapi import FastAPI
 
 from services.orchestrator.api.routes import router
 
-app = FastAPI(title="AI Agent Platform Orchestrator")
+logger = logging.getLogger(__name__)
 
+app = FastAPI(title="AI Agent Platform Orchestrator")
 app.include_router(router)
 
-
-@app.get("/health")
-def health() -> Dict[str, Any]:
-    """Health check endpoint."""
-    return {"status": "ok"}
+logger.info("Orchestrator service started")

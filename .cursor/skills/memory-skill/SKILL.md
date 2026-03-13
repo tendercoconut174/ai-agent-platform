@@ -1,9 +1,9 @@
 ---
 name: memory-skill
-description: Generate session memory, vector memory, RAG patterns, and conversation history. Use when implementing memory, embeddings, vector stores, or when the user mentions session_memory, vector_memory, or retrieval.
+description: Generate session memory, conversation history, vector memory, and RAG patterns. Use when implementing memory, sessions, embeddings, vector stores, or when the user mentions session management, conversation history, or retrieval.
 ---
 
-# Memory Skill – AI Agent Platform
+# Memory Skill -- AI Agent Platform
 
 ## When this skill applies
 
@@ -16,35 +16,70 @@ Use this skill when generating:
 
 ---
 
-# Memory Types
+# Session Management
 
-## Session Memory (`shared/memory/session_memory.py`)
+Session management is implemented in `services/gateway/session_manager.py`.
 
-- Stores conversation history per session/user.
-- Must be scoped by session_id or user_id.
-- Use for short-term context within a workflow.
-- Prefer Redis or in-memory for ephemeral sessions.
+## Current Implementation
 
-## Vector Memory (`shared/memory/vector_memory.py`)
+- **Primary storage**: PostgreSQL (`sessions` and `message_history` tables)
+- **Fallback**: In-memory dicts when PostgreSQL is unavailable
+- **DB availability**: Checked once at startup and cached
 
-- Stores embeddings for semantic search.
-- Use for long-term knowledge, document retrieval.
-- Integrate with vector DB (e.g. pgvector, Chroma).
-- Must support add, search, and delete operations.
+### Key Functions
+
+```python
+get_or_create_session(session_id: Optional[str]) -> tuple[str, bool]
+add_message(session_id: str, role: str, content: str, content_type: str = "text")
+get_history(session_id: str, limit: int = 20) -> list[dict[str, str]]
+```
+
+### ORM Models
+
+```python
+# shared/models/session.py
+class Session(TimestampMixin, Base):
+    __tablename__ = "sessions"
+    id: Mapped[str]
+    user_id: Mapped[Optional[str]]
+    metadata_: Mapped[Optional[dict]]
+    is_active: Mapped[bool]
+    messages: Mapped[list["MessageHistory"]]
+
+class MessageHistory(TimestampMixin, Base):
+    __tablename__ = "message_history"
+    id: Mapped[str]
+    session_id: Mapped[str]
+    role: Mapped[str]           # user, assistant, system
+    content: Mapped[str]
+    content_type: Mapped[str]   # text, audio, image, file
+```
+
+---
+
+# Vector Memory (Future)
+
+Not yet implemented. Planned approach:
+
+- Store embeddings for semantic search
+- Use pgvector or a dedicated vector DB
+- Integrate with agent context for RAG
+- Module path: `shared/models/embeddings.py` (placeholder exists)
 
 ---
 
 # Design Rules
 
-1. Memory must be **stateless** at the service level (state in Redis/DB).
-2. Define clear TTL and eviction for session memory.
-3. Use Pydantic models for memory payloads.
-4. Agents access memory through tools or injected context.
+1. Memory must be **stateless** at the service level (state in PostgreSQL/Redis).
+2. Session manager must gracefully fall back to in-memory when DB is unavailable.
+3. Use Pydantic models for API schemas; SQLAlchemy for persistence.
+4. Agents access conversation context through injected messages, not by querying DB directly.
 5. Never store secrets or PII in vector embeddings without encryption.
+6. Content is truncated to 50,000 characters before storage.
 
 ---
 
-# RAG Pattern
+# RAG Pattern (Future)
 
 When implementing RAG:
 

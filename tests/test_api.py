@@ -1,6 +1,6 @@
 """Integration tests for API endpoints."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,10 +21,10 @@ class TestHealthEndpoint:
 class TestMessageEndpoint:
     """Tests for /message endpoint."""
 
-    @patch("services.gateway.api.routes.call_orchestrator")
+    @patch("services.gateway.api.routes.call_orchestrator", new_callable=AsyncMock)
     def test_message_returns_result_when_orchestrator_responds(
         self,
-        mock_call: object,
+        mock_call: AsyncMock,
         client: TestClient,
     ) -> None:
         """Message endpoint returns result when orchestrator responds."""
@@ -36,10 +36,10 @@ class TestMessageEndpoint:
         assert response.status_code == 200
         assert response.json()["result"] == "Research result for test"
 
-    @patch("services.gateway.api.routes.call_orchestrator")
+    @patch("services.gateway.api.routes.call_orchestrator", new_callable=AsyncMock)
     def test_message_returns_timeout_when_orchestrator_times_out(
         self,
-        mock_call: object,
+        mock_call: AsyncMock,
         client: TestClient,
     ) -> None:
         """Message endpoint returns timeout when orchestrator times out."""

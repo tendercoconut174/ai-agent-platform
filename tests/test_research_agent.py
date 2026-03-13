@@ -1,19 +1,30 @@
 """Unit tests for research agent."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
-from services.workers.agents.research_agent import run_research_agent
+from services.agents.research_agent import run
 
 
-class TestRunResearchAgent:
-    """Tests for run_research_agent."""
+class TestResearchAgent:
+    """Tests for the research agent's async run function."""
 
-    def test_returns_structured_result(self) -> None:
-        """Return TaskResult with result field."""
-        result = run_research_agent("climate change")
-        assert result.result == "Research result for climate change"
+    @pytest.mark.asyncio
+    @patch("services.agents.base_agent.create_react_agent")
+    async def test_returns_string_result(self, mock_factory) -> None:
+        """Agent returns a string result."""
+        mock_agent = AsyncMock(side_effect=lambda msg: f"Research result for {msg}")
+        mock_factory.return_value = mock_agent
 
-    def test_result_includes_query(self) -> None:
-        """Result includes the query in output."""
-        result = run_research_agent("AI trends")
-        assert "AI trends" in result.result
+        from importlib import reload
+        import services.agents.research_agent as mod
+        reload(mod)
+
+        result = await mod.run("climate change")
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_run_is_callable(self) -> None:
+        """run is a callable."""
+        assert callable(run)

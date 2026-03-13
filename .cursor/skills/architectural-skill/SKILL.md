@@ -1,9 +1,9 @@
 ---
 name: architectural-skill
-description: Generate services, agents, workflows, queues, and orchestration logic. Use when designing services, architecture, or when the user mentions gateway, supervisor, planner, worker, or orchestration.
+description: Generate services, agents, workflows, queues, and orchestration logic. Use when designing services, architecture, or when the user mentions gateway, supervisor, orchestrator, planner, or delivery.
 ---
 
-# Architecture Skill – AI Agent Platform
+# Architecture Skill -- AI Agent Platform
 
 ## When this skill applies
 
@@ -20,29 +20,29 @@ Use this skill when generating:
 
 # Target Architecture
 
-The system follows an **event-driven distributed architecture**.
+The system is a **goal-oriented multi-agent platform** with two FastAPI services, a LangGraph supervisor, and an MCP tool layer.
 
 **Full flow:**
 
 ```
-User
-  ↓
-Gateway
-  ↓
-Supervisor (Orchestrator)
-  ↓
-Planner
-  ↓
-Task Graph Engine
-  ↓
-Queue
-  ↓
-Workers
-  ↓
-Tools
-  ↓
-Delivery Service
-  ↓
+User / Adapter (REST, WhatsApp, Slack...)
+  │
+  ▼
+Gateway (FastAPI, port 8000)
+  ├── Input Processor (text, voice, image, files → text)
+  ├── Session Manager (PostgreSQL / in-memory fallback)
+  │
+  ▼
+Orchestrator (FastAPI, port 8001)
+  └── Supervisor (LangGraph StateGraph)
+        classify → plan → execute → evaluate → [replan | deliver]
+        │
+        └── Agent Pool → MCP Tools
+  │
+  ▼
+Delivery Service (JSON / PDF / Excel / Audio)
+  │
+  ▼
 User
 ```
 
@@ -51,12 +51,13 @@ User
 # Architecture Rules
 
 1. Services must remain loosely coupled.
-2. Communication between services must occur through queues.
-3. Workers execute tasks from queues only.
+2. Gateway communicates with Orchestrator via HTTP (httpx).
+3. Agents are stateless -- they receive a message and return a string.
 4. Agents must not access databases directly.
 5. Agents interact with external systems only through MCP tools.
-6. API services must remain thin and stateless.
-7. Long-running tasks must run in workers.
+6. API services must remain thin.
+7. The Supervisor (LangGraph graph) is the single orchestration point.
+8. All output formatting is handled by the Delivery Service.
 
 ---
 
@@ -64,100 +65,108 @@ User
 
 ## 1. Gateway (`services/gateway/`)
 
-- FastAPI endpoints
-- Request validation
-- Authentication
-- Forwards requests to Supervisor
-- Must not contain business logic
+- FastAPI endpoints: `POST /message`, `POST /message/upload`
+- Input processing: multi-modal → text
+- Session management: PostgreSQL with in-memory fallback
+- Format inference: detects "give me pdf/excel" in messages
+- File delivery: returns binary downloads for PDF/Excel/audio
+- Must not contain business logic or orchestration
 
-## 2. Supervisor / Orchestrator (`services/orchestrator/`)
+## 2. Orchestrator (`services/orchestrator/`)
 
-- **Supervises all agents** — monitors execution, handles agent issues
-- **Agent-to-user communication** — agents talk to user **only through Supervisor**; agents never contact user directly
-- Coordinates the full workflow
-- Receives user intent from Gateway
-- Invokes Planner Agent to create execution plan
-- Manages workflow state and user interaction
-- Control plane of the system
-- When agents face issues or need to talk back to user, they communicate through Supervisor
+- FastAPI endpoint: `POST /orchestrate`
+- Contains the LangGraph Supervisor graph
+- Graph nodes: classify, chat_respond, plan, execute, evaluate, deliver
+- Goal-oriented: replans if evaluation determines goal not achieved (max 5 iterations)
+- Plans are DAGs of PlanSteps with agent types and dependencies
 
-## 3. Planner Agent
+## 3. Agent Pool (`services/agents/`)
 
-- **OpenAI agent** that plans the action
-- Converts user goals into executable task graphs
-- Outputs DAG of tasks (e.g. collect_data → summarize → generate_report)
-- Implemented with LangGraph + OpenAI
-- Must be deterministic
+- Six specialized agents: research, analysis, generator, code, monitor, chat
+- All built via `create_react_agent` factory (LangChain ReAct + OpenAI)
+- Each agent has a system prompt and a subset of MCP tools
+- Registered in `services/agents/registry.py`
 
-## 4. Task Graph Engine
+## 4. MCP Tools (`shared/mcp/`)
 
-- Executes the task graph from Planner Agent
-- **Calls different specialized agents** based on task type
-- Schedules nodes based on dependencies
-- Pushes individual tasks to Queue
-- Routes each task to the appropriate specialized agent
-- Handles retries and failed steps
+- Tool server with LangChain `@tool` wrappers
+- Raw implementations in `shared/mcp/tools/`
+- Tools: web_search, scrape_url, code_executor, file_io, media_processor
+- `TOOL_REGISTRY` maps agent types to allowed tool subsets
 
-## 5. Queue (`platform_queue/`)
+## 5. Task Queue (`platform_queue/`)
 
-- Redis-based task queue
-- Workers consume tasks
-- FIFO or priority ordering
+- Redis Streams for async task queuing
+- Consumer groups for reliable delivery
+- Pub/Sub for progress updates
 
-## 6. Workers (`services/workers/`)
+## 6. Delivery Service (`services/delivery/`)
 
-- Consume tasks from Queue
-- Execute **specialized OpenAI agents** (research, coding, summarization, etc.)
-- Invoke Tools for external capabilities
-- Return results to Delivery Service
-- Agents communicate with user via Supervisor when needed
+- Converts text results to PDF (fpdf2), Excel (openpyxl), Audio (OpenAI TTS)
+- Returns base64-encoded content for binary formats
+- Gateway decodes and returns as file download
 
-## 7. Tools
+## 7. Database (`database/`)
 
-- MCP-compatible tool interfaces
-- Web search, code execution, document generation, etc.
-- Stateless and independent
-- Agents call tools, not external APIs directly
-
-## 8. Delivery Service
-
-- Receives results from Workers (via Supervisor)
-- Delivers final output to User
-- May push to WebSocket, webhook, or return via Gateway
+- PostgreSQL + SQLAlchemy + Alembic
+- Tables: sessions, message_history, workflows, workflow_steps
+- Session manager gracefully falls back to in-memory when DB unavailable
 
 ---
 
 # Agent Communication Rules
 
-- **Agents never talk to user directly.** All agent-to-user communication goes through Supervisor.
-- When an agent faces issues or needs to ask the user something, it sends a message to Supervisor.
-- Supervisor relays to user and routes user response back to the agent.
+- Agents never talk to the user directly.
+- The execute node dispatches agents and collects results.
+- The evaluate node determines if the goal is achieved.
+- If not achieved, the supervisor replans and re-executes.
+- The deliver node passes the final result to the Delivery Service.
 
 ---
 
 # Project Structure
 
 ```
-main.py                     # Entry point
-platform_queue/             # Redis task queue
+main.py                              # CLI: gateway, orchestrator, worker, migrate
 services/
-  gateway/                  # FastAPI API
-  orchestrator/             # Supervisor, Planner, Task Graph Engine
-    supervisor/             # Orchestration logic
-  workers/                  # Worker + agents + execution
-  delivery/                 # Result delivery to user
+  gateway/                           # FastAPI API (port 8000)
+    api/routes.py                    #   /message, /message/upload
+    api/orchestrator_client.py       #   httpx client for orchestrator
+    input_processor.py               #   Multi-modal input handling
+    session_manager.py               #   Session + message history
+  orchestrator/                      # FastAPI orchestrator (port 8001)
+    api/routes.py                    #   /orchestrate
+    supervisor/
+      graph.py                       #   LangGraph StateGraph
+      state.py                       #   WorkflowState, PlanStep, ExecutionPlan
+      nodes/                         #   classify, plan, execute, evaluate, deliver
+  agents/                            # Agent pool
+    base_agent.py                    #   ReAct agent factory
+    registry.py                      #   Agent type → runner
+    research_agent.py, analysis_agent.py, generator_agent.py,
+    code_agent.py, monitor_agent.py, chat_agent.py
+  delivery/                          # Output formatting
+    delivery_service.py              #   PDF, Excel, Audio, JSON
+    formatters/audio.py              #   TTS conversion
+  workers/                           # Background worker
 shared/
-  tools/                    # MCP tools
+  models/                            # SQLAlchemy ORM + Pydantic schemas
+  mcp/                               # MCP tool server + client
+    tools/                           #   web_search, scrape_url, code_executor, file_io, media_processor
+platform_queue/                      # Redis Streams task queue
+database/                            # SQLAlchemy connection + Alembic
 ```
 
 ---
 
 # Technology Constraints
 
-- Python ≥ 3.12
-- **OpenAI** for all agents (Planner, specialized agents)
+- Python >= 3.14
+- OpenAI for all LLM calls (agents, planner, classifier, evaluator)
 - Pydantic for schemas
-- LangGraph for agent workflows
+- LangGraph for supervisor workflow
+- LangChain for agent creation
 - MCP for tool interfaces
-- Redis for queues
-- Docker for service runtime
+- Redis for queues and pub/sub
+- PostgreSQL for persistence
+- Docker Compose for service runtime

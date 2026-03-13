@@ -1,122 +1,296 @@
 # AI Agent Platform
 
-Event-driven distributed platform for AI agents.
+A fully async, goal-oriented, multi-agent AI system built with LangGraph orchestration, MCP tools, multi-modal I/O, and persistent session management. Provider-agnostic LLM support (OpenAI, Anthropic, Google, Ollama, Groq). Accepts complex tasks via REST API, breaks them into executable plans, dispatches specialized agents, evaluates results, and delivers output in the requested format.
 
 ## Architecture
 
 ```
-User → Gateway → Supervisor (Orchestrator) → Planner → Task Graph Engine → Queue → Workers → Tools → Delivery Service → User
+User / Adapter (REST, WhatsApp, Slack...)
+  │
+  ▼
+Gateway (FastAPI)
+  ├── Input Processor (text, voice/Whisper, image/GPT-4V, file extraction)
+  ├── Session Manager (PostgreSQL with in-memory fallback)
+  │
+  ▼
+Orchestrator (FastAPI)
+  └── Supervisor (LangGraph StateGraph)
+        ├── classify  ─── casual? ──► chat_respond ──► deliver ──► END
+        │                    │
+        │                    └── task? ──► plan ──► execute ──► evaluate ──┐
+        │                                   ▲                              │
+        │                                   └── goal not achieved ─────────┘
+        │                                          goal achieved ──► deliver ──► END
+        │
+        └── Agent Pool (research, analysis, generator, code, monitor, chat)
+              └── MCP Tools (web_search, scrape_url, code_executor, file_io, media_processor)
+  │
+  ▼
+Delivery Service (JSON, PDF, Excel, Audio/TTS)
+  │
+  ▼
+User
 ```
 
-### Components
+## Key Features
 
-| Component | Purpose |
-|-----------|---------|
-| **Gateway** | FastAPI endpoints, forwards to Orchestrator |
-| **Supervisor** | Coordinates workflow, invokes Planner |
-| **Planner** | Converts user goals into task graphs (DAGs) |
-| **Task Graph Engine** | Executes graph, pushes tasks to Queue |
-| **Queue** | Redis-based task queue |
-| **Workers** | Consume tasks, run agents, invoke tools |
-| **Tools** | MCP-compatible capabilities |
-| **Delivery Service** | Formats and returns results to user |
+- **Fully async** -- end-to-end async from HTTP endpoints through LangGraph to LLM calls (`ainvoke`)
+- **Provider-agnostic LLM** -- swap between OpenAI, Anthropic, Google Gemini, Ollama, Groq via env vars
+- **Goal-oriented execution** -- plans, executes, evaluates, and replans until the goal is achieved
+- **Intent classification** -- casual chat bypasses planning; complex tasks get full DAG execution
+- **Async parallel execution** -- independent plan steps run concurrently via `asyncio.gather()`
+- **Multi-modal input** -- text, voice (Whisper transcription), images (GPT-4V), file attachments (PDF, Excel, CSV, TXT)
+- **Multi-format output** -- JSON, PDF (fpdf2), Excel (openpyxl), Audio (TTS)
+- **Session continuity** -- PostgreSQL-backed conversation history with in-memory fallback
+- **MCP tools** -- agents use structured, discoverable tools rather than calling APIs directly
+- **Format-aware planning** -- the planner injects output format instructions so agents produce data suitable for the requested format
 
 ## Prerequisites
 
-- Python ≥ 3.14
-- Redis
-- uv (package manager)
+- Python >= 3.14
+- Redis (for task queue and pub/sub)
+- PostgreSQL (optional; falls back to in-memory)
+- [uv](https://docs.astral.sh/uv/) package manager
 
-## Setup
+## Quick Start
 
 ```bash
+# Install dependencies
 uv sync
-```
 
-## Running Locally
+# Start infrastructure
+docker compose up -d redis postgres
 
-**1. Start Redis**
-```bash
-docker compose up -d redis
-```
+# Run database migrations
+uv run python main.py migrate
 
-**2. Start services (3 terminals)**
-
-Terminal 1 – Worker:
-```bash
-uv run python main.py worker
-```
-
-Terminal 2 – Orchestrator:
-```bash
+# Terminal 1 -- Orchestrator (port 8001)
 uv run python main.py orchestrator
-```
 
-Terminal 3 – Gateway:
-```bash
+# Terminal 2 -- Gateway (port 8000)
 uv run python main.py gateway
 ```
 
-**3. Test**
-```bash
-# Default (JSON, auto mode)
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"message": "research climate change"}'
+PostgreSQL is optional. Without it, sessions are stored in-memory (lost on restart).
 
-# Casual chat (direct response, no planning)
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"message": "hello!", "mode": "chat"}'
+## API Usage
 
-# Output as PDF or Excel (returns file for download)
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"message": "extract ICC T20 world cup winners", "output_format": "xl"}' \
-  -o result.xlsx
-```
-
-## Running with Docker
+### POST /message -- Synchronous JSON
 
 ```bash
-docker compose up -d redis orchestrator worker gateway
+# Casual chat
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "hello!"}'
+
+# Complex task with PDF output
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "research ICC T20 world cup winners"}' \
+  --output result.pdf
+
+# Excel output (auto-detected from message)
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "give me excel of top 10 tech companies by revenue"}'  \
+  --output result.xlsx
+
+# Session continuity
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "tell me more", "session_id": "<session_id_from_previous>"}'
 ```
+
+### POST /message/upload -- Multipart (voice, image, files)
+
+```bash
+# Voice input
+curl -X POST http://localhost:8000/message/upload \
+  -F audio=@recording.wav
+
+# Image + text
+curl -X POST http://localhost:8000/message/upload \
+  -F message="analyze this image" \
+  -F image=@photo.png
+
+# File attachment
+curl -X POST http://localhost:8000/message/upload \
+  -F message="summarize this data" \
+  -F files=@data.csv
+```
+
+### Request Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `message` | required | User message or task description |
+| `output_format` | `json` | `json`, `pdf`, `xl`, `audio` |
+| `mode` | `auto` | `auto`, `chat`, `task` |
+| `session_id` | auto-generated | Session ID for conversation continuity |
+| `callback_url` | null | Webhook URL for async result delivery |
+
+### Response Format
+
+```json
+{
+  "result": "...",
+  "workflow_id": "uuid",
+  "output_format": "json",
+  "content_base64": null,
+  "content_type": null,
+  "filename": null,
+  "session_id": "uuid"
+}
+```
+
+For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file download with appropriate `Content-Type` and `Content-Disposition` headers.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| REDIS_HOST | localhost | Redis host (use `redis` in Docker) |
-| REDIS_PORT | 6379 | Redis port |
-| ORCHESTRATOR_URL | http://localhost:8001 | Orchestrator URL (use `http://orchestrator:8001` in Docker) |
-| OPENAI_API_KEY | — | OpenAI API key for agents (Planner, research_agent, general_agent). If unset, uses fallbacks. |
-| OPENAI_MODEL | gpt-4o-mini | OpenAI model for agents |
+| `OPENAI_API_KEY` | -- | API key for OpenAI (default provider) |
+| `LLM_PROVIDER` | `openai` | Global LLM provider: `openai`, `anthropic`, `google`, `ollama`, `groq` |
+| `LLM_MODEL` | provider default | Global model name (e.g. `gpt-4o-mini`, `claude-sonnet-4-20250514`, `gemini-2.0-flash`) |
+| `LLM_PROVIDER__<CMP>` | inherits global | Per-component override (CMP: `AGENTS`, `CLASSIFY`, `PLANNER`, `EVALUATOR`, `CHAT`) |
+| `LLM_MODEL__<CMP>` | inherits global | Per-component model override |
+| `ANTHROPIC_API_KEY` | -- | API key for Anthropic (when using Claude) |
+| `GOOGLE_API_KEY` | -- | API key for Google (when using Gemini) |
+| `GROQ_API_KEY` | -- | API key for Groq |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (for local models) |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL connection URL |
+| `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway) |
+| `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace directory for file_io tool |
 
-**Web search:** General and research agents use ddgs (Bing/DuckDuckGo metasearch) for real web search (no API key needed).
+### LLM Provider Examples
 
-### Request options
+```bash
+# All OpenAI (default, no changes needed)
+OPENAI_API_KEY=sk-...
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `output_format` | json | `json`, `pdf`, or `xl` (Excel). When pdf/xl, response includes `content_base64`, `content_type`, `filename`. |
-| `mode` | auto | `auto` (classify), `chat` (direct chat, no planning), or `task` (full planning flow). |
+# All Anthropic
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Mix: cheap classifier + powerful agents
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+LLM_PROVIDER__AGENTS=anthropic
+LLM_MODEL__AGENTS=claude-sonnet-4-20250514
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Local Ollama (no API key needed)
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3
+```
+
+Install only the provider packages you need:
+
+```bash
+uv pip install "ai-agent-platform[anthropic]"  # Claude
+uv pip install "ai-agent-platform[google]"     # Gemini
+uv pip install "ai-agent-platform[ollama]"     # Ollama
+uv pip install "ai-agent-platform[groq]"       # Groq
+uv pip install "ai-agent-platform[all-llm]"    # All providers
+```
 
 ## Project Structure
 
 ```
-main.py                     # Entry point (gateway, worker, orchestrator)
-platform_queue/             # Redis task queue
-shared/                     # Pydantic models, tools
+main.py                              # CLI entry point: gateway, orchestrator, worker, migrate
 services/
-  gateway/                  # FastAPI API
-  orchestrator/             # Supervisor, Planner, Task Graph Engine
-  workers/                  # Worker, agents, execution
-  delivery/                 # Result delivery to user
-tests/                      # pytest tests
+  gateway/                           # Async FastAPI gateway service (port 8000)
+    api/routes.py                    #   Async /message and /message/upload endpoints
+    api/orchestrator_client.py       #   Async HTTP client for orchestrator (httpx.AsyncClient)
+    input_processor.py               #   Multi-modal input handling (audio, image, files)
+    session_manager.py               #   Session and message history (PostgreSQL + fallback)
+  orchestrator/                      # Async FastAPI orchestrator service (port 8001)
+    api/routes.py                    #   Async /orchestrate endpoint
+    supervisor/                      #   Async LangGraph supervisor graph
+      graph.py                       #     StateGraph with ainvoke: classify → plan → execute → evaluate → deliver
+      state.py                       #     WorkflowState, PlanStep, ExecutionPlan, StepResult
+      nodes/
+        classify.py                  #     Structured LLM intent classification (casual/simple/complex/monitor)
+        plan.py                      #     Structured LLM DAG planning with format hints
+        execute.py                   #     Async step execution with asyncio.gather for parallelism
+        evaluate.py                  #     Structured LLM goal evaluation with replan loop
+        deliver.py                   #     Async final result formatting
+  agents/                            # Async agent pool
+    base_agent.py                    #   Async ReAct agent factory (create_agent + ainvoke + MCP tools)
+    registry.py                      #   Agent type → async runner mapping
+    research_agent.py                #   Web search and data gathering
+    analysis_agent.py                #   Summarization and pattern extraction
+    generator_agent.py               #   Report and document generation
+    code_agent.py                    #   Code execution and data processing
+    monitor_agent.py                 #   Long-running observation tasks
+    chat_agent.py                    #   Casual conversation
+  delivery/                          # Output formatting
+    delivery_service.py              #   PDF, Excel, Audio, JSON formatting
+    formatters/audio.py              #   OpenAI TTS conversion
+  workers/                           # Redis Streams consumer
+    worker_service.py                #   Background worker process
+    execution/task_runner.py         #   Task routing to agents
+shared/
+  llm.py                             # Centralized LLM factory (provider-agnostic get_llm)
+  models/                            # Data models
+    base.py                          #   SQLAlchemy DeclarativeBase + TimestampMixin
+    schemas.py                       #   Pydantic API schemas
+    session.py                       #   Session and MessageHistory ORM models
+    workflow.py                      #   Workflow and WorkflowStep ORM models
+  mcp/                               # MCP tool system
+    server.py                        #   Tool registry + LangChain tool wrappers
+    client.py                        #   Tool discovery client
+    tools/
+      web_search.py                  #   DuckDuckGo multi-backend search
+      url_scraper.py                 #   Web page text extraction (httpx + BeautifulSoup)
+      code_executor.py               #   Sandboxed Python execution
+      file_io.py                     #   File read/write/list in workspace
+      media_processor.py             #   Audio transcription, TTS, image description
+platform_queue/                      # Redis Streams task queue
+  task_queue.py                      #   enqueue, consume, ack, result helpers
+database/                            # Database layer
+  connection.py                      #   SQLAlchemy engine + session factory
+alembic/                             # Database migrations
+  env.py                             #   Migration environment
+  versions/                          #   Migration scripts
+tests/                               # Test suite
+docker-compose.yml                   # Redis + PostgreSQL + services
 ```
 
 ## Testing
 
 ```bash
-uv run pytest
+uv run pytest           # run all tests
+uv run pytest -v        # verbose output
+uv run pytest --tb=short  # short tracebacks
 ```
+
+## Docker
+
+```bash
+# Full stack
+docker compose up -d
+
+# Infrastructure only (for local dev)
+docker compose up -d redis postgres
+```
+
+## Supervisor Flow Detail
+
+All nodes are async and invoked via `await graph.ainvoke()`:
+
+1. **Classify** -- Determines intent using `await llm.ainvoke()` or heuristics: `casual`, `simple`, `complex`, or `monitor`
+2. **Chat Respond** -- For casual intent, responds directly without planning via async LLM chat
+3. **Plan** -- LLM generates a DAG of `PlanStep`s with agent types, messages, and dependencies
+4. **Execute** -- Dispatches steps to async agents; independent steps run concurrently via `asyncio.gather()`
+5. **Evaluate** -- LLM evaluates whether the result achieves the user's goal
+6. **Replan** -- If the goal is not achieved and max iterations not reached, loops back to Plan
+7. **Deliver** -- Formats the final result; file conversion (PDF/Excel/Audio) handled by the Delivery Service
+
+## License
+
+MIT

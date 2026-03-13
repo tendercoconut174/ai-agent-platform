@@ -1,74 +1,116 @@
 ---
 name: agent-skill
-description: Generate OpenAI agents, LangGraph workflows, agent state models, and tool interactions. Use when creating agents, implementing LangGraph nodes, or when the user mentions research agent, coding agent, or multi-agent coordination.
+description: Generate agents, agent configurations, system prompts, and agent registry entries. Use when creating agents, modifying agent behavior, or when the user mentions research agent, coding agent, chat agent, or multi-agent coordination.
 ---
 
-# Agent Skill – AI Agent Platform
+# Agent Skill -- AI Agent Platform
 
 ## When this skill applies
 
 Use this skill when generating:
 
-- agents
-- LangGraph workflows
-- agent state models
-- tool interactions
-- multi-agent coordination
+- new agents or modifying existing agents
+- system prompts for agents
+- agent registry entries
+- agent-to-tool bindings
+- multi-agent coordination logic
 
 ---
 
 # Agent Technology
 
-**All agents are OpenAI agents.** Use OpenAI models (GPT-4, etc.) for agent reasoning and execution.
+All agents use **LangChain ReAct agents** (`langchain.agents.create_agent`) backed by **OpenAI models** (default `gpt-4o-mini`). Each agent is created via the shared factory in `services/agents/base_agent.py`.
 
 ---
 
 # Agent Design Philosophy
 
-Agents are **specialized** components — each agent is expert in a particular domain (research, coding, summarization, etc.).
+Agents are **specialized** components -- each agent is expert in a particular domain (research, analysis, code, generation, monitoring, chat).
 
 Agents must:
 
 - solve a specific problem
-- be modular
-- be stateless
-- produce structured outputs
+- be modular and stateless
+- produce string output
+- access external systems only through MCP tools
 
-Agents must never contain API logic or infrastructure code.
+Agents must never contain API logic, infrastructure code, or database access.
 
 ---
 
 # Agent-to-User Communication
 
-**Agents never talk to user directly.** All agent-to-user communication goes through the Supervisor.
+**Agents never talk to the user directly.** All agent-to-user communication goes through the Supervisor (LangGraph StateGraph).
 
-- When an agent faces issues, it reports to Supervisor
-- When an agent needs to ask the user something, it sends a message to Supervisor
-- Supervisor relays to user and routes user response back to the agent
-- Agents must use the Supervisor interface for any user interaction
+- Agents return results to the Supervisor via the execute node
+- The Supervisor evaluates results and decides whether to replan or deliver
+- The Delivery Service formats the final output for the user
 
 ---
 
 # Agent Implementation Standard
 
-All agents must be implemented using **LangGraph + OpenAI**. Each agent must define:
+All agents follow this pattern:
 
-1. State schema
-2. Graph nodes
-3. Graph builder
-4. Execution entrypoint
+```python
+# services/agents/my_agent.py
+from services.agents.base_agent import create_react_agent
+
+SYSTEM_PROMPT = (
+    "You are a specialist in ...\n\n"
+    "Guidelines:\n"
+    "- Use tool_name to ...\n"
+    "- Produce structured output\n"
+)
+
+_agent = create_react_agent("my_agent", SYSTEM_PROMPT)
+
+def run(message: str) -> str:
+    return _agent(message)
+```
+
+After creating the agent file:
+
+1. Register it in `services/agents/registry.py`
+2. Assign tools in `shared/mcp/server.py` `TOOL_REGISTRY`
+
+---
+
+# Current Agent Pool
+
+| Agent | File | Tools | Purpose |
+|-------|------|-------|---------|
+| research | `research_agent.py` | web_search, scrape_url | Web search and data gathering |
+| analysis | `analysis_agent.py` | web_search, execute_python, read_file | Summarization, comparison |
+| generator | `generator_agent.py` | web_search, write_file, read_file, execute_python | Report/document creation |
+| code | `code_agent.py` | execute_python, read_file, write_file, list_files | Calculations, data processing |
+| monitor | `monitor_agent.py` | web_search, scrape_url | Long-running observation |
+| chat | `chat_agent.py` | (none) | Casual conversation |
 
 ---
 
 # Agent State
 
-Agent state must use **Pydantic models**.
+The Supervisor manages workflow state via `WorkflowState` (TypedDict). Individual agents are stateless -- they receive a message string and return a result string.
 
 ```python
-from typing import Optional
-from pydantic import BaseModel
-
-class AgentState(BaseModel):
-    task: str
-    result: Optional[str] = None
+class WorkflowState(TypedDict, total=False):
+    goal: str
+    output_format: str
+    intent: str              # casual | simple | complex | monitor
+    plan: Optional[ExecutionPlan]
+    step_results: list[StepResult]
+    iteration_count: int
+    goal_achieved: bool
+    final_result: Optional[str]
 ```
+
+---
+
+# Key Files
+
+- `services/agents/base_agent.py` -- ReAct agent factory
+- `services/agents/registry.py` -- Agent type → runner mapping
+- `services/agents/*.py` -- Individual agent definitions
+- `shared/mcp/server.py` -- Tool registry (agent type → tools)
+- `services/orchestrator/supervisor/nodes/execute.py` -- Agent execution with dependency resolution

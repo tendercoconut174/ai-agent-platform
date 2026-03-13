@@ -1,0 +1,226 @@
+# Architecture
+
+## System Overview
+
+The AI Agent Platform is a goal-oriented, multi-agent system that accepts user tasks, decomposes them into executable plans, dispatches specialized agents, evaluates results, and delivers output in the requested format.
+
+The system is split into two FastAPI services (Gateway and Orchestrator), a shared agent pool, an MCP tool layer, and supporting infrastructure (Redis, PostgreSQL).
+
+## High-Level Flow
+
+```
+                                 ┌─────────────────────────────┐
+                                 │         User / Adapter       │
+                                 │  (REST, WhatsApp, Slack...)  │
+                                 └─────────────┬───────────────┘
+                                               │
+                                               ▼
+                          ┌──────────────────────────────────────────┐
+                          │              Gateway (port 8000)          │
+                          │                                          │
+                          │  ┌──────────────┐  ┌──────────────────┐  │
+                          │  │Input Processor│  │ Session Manager  │  │
+                          │  │(audio, image, │  │ (PostgreSQL /    │  │
+                          │  │ files → text) │  │  in-memory)      │  │
+                          │  └──────────────┘  └──────────────────┘  │
+                          └────────────────────┬─────────────────────┘
+                                               │ HTTP POST /orchestrate
+                                               ▼
+                          ┌──────────────────────────────────────────┐
+                          │          Orchestrator (port 8001)         │
+                          │                                          │
+                          │  ┌────────────────────────────────────┐  │
+                          │  │     Supervisor (LangGraph)          │  │
+                          │  │                                    │  │
+                          │  │  classify ──► plan ──► execute     │  │
+                          │  │     │              ▲       │       │  │
+                          │  │     │casual        │       ▼       │  │
+                          │  │     ▼          replan   evaluate   │  │
+                          │  │  chat_respond              │       │  │
+                          │  │     │                      ▼       │  │
+                          │  │     └──────► deliver ◄─── done     │  │
+                          │  └────────────────────────────────────┘  │
+                          └────────────────────┬─────────────────────┘
+                                               │
+                              ┌────────────────┼────────────────┐
+                              ▼                ▼                ▼
+                       ┌──────────┐    ┌──────────┐    ┌──────────┐
+                       │ research │    │ analysis │    │generator │  ...
+                       │  agent   │    │  agent   │    │  agent   │
+                       └────┬─────┘    └────┬─────┘    └────┬─────┘
+                            │               │               │
+                            ▼               ▼               ▼
+                       ┌──────────────────────────────────────────┐
+                       │            MCP Tool Layer                 │
+                       │  web_search, scrape_url, code_executor,  │
+                       │  file_io, media_processor                │
+                       └──────────────────────────────────────────┘
+                                               │
+                                               ▼
+                          ┌──────────────────────────────────────────┐
+                          │          Delivery Service                 │
+                          │   JSON / PDF / Excel / Audio (TTS)       │
+                          └──────────────────────────────────────────┘
+```
+
+## Components
+
+### Gateway (`services/gateway/`)
+
+The user-facing API layer. Responsibilities:
+
+- **API endpoints**: `POST /message` (JSON) and `POST /message/upload` (multipart)
+- **Input processing**: Converts multi-modal input (audio, images, files) into text using Whisper, GPT-4V, and text extraction
+- **Format inference**: Detects output format hints in messages ("give me pdf", "as excel") and strips them before forwarding
+- **Session management**: Creates/retrieves sessions and stores message history in PostgreSQL (with in-memory fallback)
+- **File delivery**: Returns binary file downloads (PDF, Excel, audio) with proper content types
+
+The Gateway communicates with the Orchestrator via HTTP (`httpx`).
+
+### Orchestrator (`services/orchestrator/`)
+
+The brain of the system. Contains the LangGraph supervisor that orchestrates the entire workflow.
+
+#### Supervisor Graph (`services/orchestrator/supervisor/`)
+
+A compiled LangGraph `StateGraph` with the following nodes:
+
+| Node | Purpose |
+|------|---------|
+| **classify** | Determines user intent: `casual`, `simple`, `complex`, or `monitor` |
+| **chat_respond** | Direct LLM response for casual messages (no planning) |
+| **plan** | LLM generates a DAG of `PlanStep`s with agent types, messages, and dependencies |
+| **execute** | Dispatches steps to agents, respecting dependencies; parallelizes independent steps |
+| **evaluate** | LLM evaluates whether the result satisfies the user's goal |
+| **deliver** | Formats the final result text |
+
+#### Routing Logic
+
+- After **classify**: casual intent → `chat_respond`; anything else → `plan`
+- After **evaluate**: goal achieved → `deliver`; not achieved → `plan` (replan loop, max 5 iterations)
+
+#### Workflow State
+
+```python
+class WorkflowState(TypedDict, total=False):
+    goal: str                          # User's original message
+    output_format: str                 # json, pdf, xl, audio
+    session_id: Optional[str]
+    workflow_id: Optional[str]
+    intent: str                        # casual, simple, complex, monitor
+    plan: Optional[ExecutionPlan]      # DAG of PlanSteps
+    step_results: list[StepResult]     # Results from executed steps
+    iteration_count: int               # Current replan iteration
+    max_iterations: int                # Max replan attempts (default 5)
+    goal_achieved: bool
+    final_result: Optional[str]
+    error: Optional[str]
+```
+
+### Agent Pool (`services/agents/`)
+
+Six specialized agents, all built with the same factory (`create_react_agent`):
+
+| Agent | Tools | Purpose |
+|-------|-------|---------|
+| **research** | web_search, scrape_url | Web search, data gathering, fact-finding |
+| **analysis** | web_search, execute_python, read_file | Summarization, comparison, pattern extraction |
+| **generator** | web_search, write_file, read_file, execute_python | Report/document creation |
+| **code** | execute_python, read_file, write_file, list_files | Calculations, data processing |
+| **monitor** | web_search, scrape_url | Long-running observation tasks |
+| **chat** | (none) | Casual conversation |
+
+Each agent is a LangChain ReAct agent (`langchain.agents.create_agent`) with access to a subset of MCP tools determined by the agent type.
+
+### MCP Tool Layer (`shared/mcp/`)
+
+Tools follow Model Context Protocol principles: structured input, structured output, stateless, single responsibility.
+
+| Tool | Module | Description |
+|------|--------|-------------|
+| `tool_web_search` | `web_search.py` | DuckDuckGo search with multi-backend fallback (Google, DuckDuckGo, Brave, Yahoo) |
+| `tool_scrape_url` | `url_scraper.py` | Extracts readable text from web pages (httpx + BeautifulSoup) |
+| `tool_execute_python` | `code_executor.py` | Sandboxed Python code execution (safe stdlib modules only) |
+| `tool_read_file` | `file_io.py` | Read files from agent workspace |
+| `tool_write_file` | `file_io.py` | Write files to agent workspace |
+| `tool_list_files` | `file_io.py` | List files in agent workspace |
+| `tool_transcribe_audio` | `media_processor.py` | Audio → text via OpenAI Whisper |
+| `tool_text_to_speech` | `media_processor.py` | Text → audio via OpenAI TTS |
+| `tool_describe_image` | `media_processor.py` | Image → description via GPT-4V |
+
+The `TOOL_REGISTRY` in `server.py` maps agent types to their allowed tool subsets.
+
+### Delivery Service (`services/delivery/`)
+
+Converts the text result into the requested output format:
+
+- **JSON**: Pass-through as `MessageResponse`
+- **PDF**: `fpdf2` with text wrapping and auto page breaks
+- **Excel**: `openpyxl` parsing markdown tables into cells with bold headers
+- **Audio**: OpenAI TTS to MP3, base64-encoded
+
+### Session Manager (`services/gateway/session_manager.py`)
+
+Provides conversation continuity:
+
+- Uses PostgreSQL (`sessions` and `message_history` tables) when available
+- Gracefully falls back to in-memory storage when PostgreSQL is unreachable
+- Database availability is checked once at startup and cached
+
+### Task Queue (`platform_queue/task_queue.py`)
+
+Redis Streams-based task queue for async/background execution:
+
+- `enqueue_task` → `XADD` to `task_stream`
+- `consume_task` → `XREADGROUP` with consumer groups
+- `push_result` / `wait_for_result` → Redis lists for result exchange
+- `publish_progress` → Redis Pub/Sub for real-time progress
+
+### Database (`database/`)
+
+- **Engine**: SQLAlchemy with `psycopg2` (sync) driver
+- **Migrations**: Alembic with autogenerate support
+- **Tables**: `sessions`, `message_history`, `workflows`, `workflow_steps`
+
+## Data Flow: Complex Task Example
+
+1. User sends: `{"message": "research top 5 tech companies and create an excel report"}`
+2. **Gateway** infers `output_format=xl`, strips "excel report" from message, creates/retrieves session
+3. **Gateway** calls `POST /orchestrate` on the Orchestrator
+4. **Supervisor.classify**: LLM classifies intent as `complex`
+5. **Supervisor.plan**: LLM creates a 3-step DAG:
+   - `step_1` (research): "Find top 5 tech companies by revenue"
+   - `step_2` (analysis): "Summarize and compare" (depends on step_1)
+   - `step_3` (generator): "Format as markdown table" (depends on step_2)
+6. **Supervisor.execute**: Runs step_1 first, then step_2 with step_1's output as context, then step_3
+7. **Supervisor.evaluate**: LLM confirms the result contains a proper table → goal achieved
+8. **Supervisor.deliver**: Returns final text to Orchestrator
+9. **Delivery Service**: Parses markdown table into Excel cells, base64-encodes the XLSX
+10. **Gateway**: Decodes base64, returns binary XLSX with `Content-Disposition: attachment`
+
+## Data Flow: Casual Chat Example
+
+1. User sends: `{"message": "hi how are you"}`
+2. **Gateway** creates session, forwards to Orchestrator
+3. **Supervisor.classify**: Heuristic/LLM detects `casual` intent
+4. **Supervisor.chat_respond**: LLM generates conversational reply directly
+5. **Supervisor.deliver**: Returns text
+6. **Gateway**: Returns JSON response with `session_id`
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Python >= 3.14 |
+| Web framework | FastAPI + Uvicorn |
+| Agent framework | LangChain + LangGraph |
+| LLM | OpenAI (gpt-4o-mini default) |
+| Database | PostgreSQL 15 + SQLAlchemy + Alembic |
+| Queue | Redis 7 (Streams + Pub/Sub) |
+| HTTP client | httpx |
+| PDF generation | fpdf2 |
+| Excel generation | openpyxl |
+| Web scraping | httpx + BeautifulSoup4 |
+| Web search | ddgs (DuckDuckGo) |
+| Audio processing | OpenAI Whisper + TTS |
+| Containerization | Docker Compose |

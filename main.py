@@ -1,17 +1,15 @@
 """Entry point for ai-agent-platform."""
 
 import argparse
+import subprocess
+import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import subprocess
-import sys
-
 
 def run_gateway(host: str = "0.0.0.0", port: int = 8000) -> None:
-    """Start the FastAPI gateway."""
     subprocess.run(
         [sys.executable, "-m", "uvicorn", "services.gateway.main:app", "--host", host, "--port", str(port)],
         check=True,
@@ -19,49 +17,37 @@ def run_gateway(host: str = "0.0.0.0", port: int = 8000) -> None:
 
 
 def run_worker() -> None:
-    """Start the worker service."""
-    subprocess.run(
-        [sys.executable, "-m", "services.workers.worker_service"],
-        check=True,
-    )
+    subprocess.run([sys.executable, "-m", "services.workers.worker_service"], check=True)
 
 
 def run_orchestrator(host: str = "0.0.0.0", port: int = 8001) -> None:
-    """Start the orchestrator service."""
     subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "services.orchestrator.main:app",
-            "--host",
-            host,
-            "--port",
-            str(port),
-        ],
+        [sys.executable, "-m", "uvicorn", "services.orchestrator.main:app", "--host", host, "--port", str(port)],
         check=True,
     )
 
 
+def run_migrate() -> None:
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="ai-agent-platform",
-        description="AI Agent Platform - Gateway, Worker, and more.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True, help="Service to run")
+    parser = argparse.ArgumentParser(prog="ai-agent-platform")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    gateway_parser = subparsers.add_parser("gateway", help="Start the FastAPI gateway")
-    gateway_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    gateway_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    gateway_parser.set_defaults(func=lambda args: run_gateway(args.host, args.port))
+    gw = subparsers.add_parser("gateway")
+    gw.add_argument("--host", default="0.0.0.0")
+    gw.add_argument("--port", type=int, default=8000)
+    gw.set_defaults(func=lambda a: run_gateway(a.host, a.port))
 
-    worker_parser = subparsers.add_parser("worker", help="Start the worker service")
-    worker_parser.set_defaults(func=lambda args: run_worker())
+    subparsers.add_parser("worker").set_defaults(func=lambda a: run_worker())
 
-    orchestrator_parser = subparsers.add_parser("orchestrator", help="Start the orchestrator service")
-    orchestrator_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    orchestrator_parser.add_argument("--port", type=int, default=8001, help="Port to bind (default: 8001)")
-    orchestrator_parser.set_defaults(func=lambda args: run_orchestrator(args.host, args.port))
+    orch = subparsers.add_parser("orchestrator")
+    orch.add_argument("--host", default="0.0.0.0")
+    orch.add_argument("--port", type=int, default=8001)
+    orch.set_defaults(func=lambda a: run_orchestrator(a.host, a.port))
+
+    subparsers.add_parser("migrate").set_defaults(func=lambda a: run_migrate())
 
     args = parser.parse_args()
     args.func(args)

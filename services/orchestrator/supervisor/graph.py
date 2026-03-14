@@ -145,6 +145,8 @@ async def run_workflow(
 
     graph = get_supervisor_graph()
 
+    workflow_deadline = t0 + 110  # 110s deadline, 10s buffer before gateway's 120s timeout
+
     initial_state: WorkflowState = {
         "goal": goal,
         "output_format": output_format,
@@ -159,6 +161,7 @@ async def run_workflow(
         "iteration_count": 0,
         "max_iterations": 5,
         "goal_achieved": False,
+        "deadline": workflow_deadline,
         "final_result": None,
         "error": None,
     }

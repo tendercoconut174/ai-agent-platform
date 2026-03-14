@@ -5,13 +5,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_BACKENDS = ["google", "duckduckgo", "brave", "yahoo"]
+_BACKENDS = ["duckduckgo", "brave", "mojeek", "yahoo"]
 
 
 def web_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """Search the web and return structured results.
 
-    Tries multiple backends in order until one succeeds.
+    Tries the default (auto) backend first, then falls back to specific backends.
 
     Args:
         query: Search query string.
@@ -25,18 +25,25 @@ def web_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     max_results = min(max(max_results, 1), 20)
     ddgs = DDGS()
 
+    def _parse(raw: list) -> list[dict[str, Any]]:
+        return [
+            {"title": r.get("title", ""), "body": r.get("body", ""), "href": r.get("href", "")}
+            for r in raw
+        ]
+
+    try:
+        raw = list(ddgs.text(query, max_results=max_results))
+        if raw:
+            return _parse(raw)
+    except Exception as exc:
+        logger.debug("Search default backend failed: %s", exc)
+
     for backend in _BACKENDS:
         try:
             raw = list(ddgs.text(query, max_results=max_results, backend=backend))
             if raw:
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "body": r.get("body", ""),
-                        "href": r.get("href", ""),
-                    }
-                    for r in raw
-                ]
+                logger.debug("Search succeeded with backend=%s", backend)
+                return _parse(raw)
         except Exception as exc:
             logger.debug("Search backend %s failed: %s", backend, exc)
             continue

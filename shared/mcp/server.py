@@ -6,6 +6,7 @@ from typing import Any, Callable
 from langchain_core.tools import StructuredTool, tool
 
 from shared.mcp.tools.code_executor import execute_python
+from shared.mcp.tools.email_sender import send_email
 from shared.mcp.tools.file_io import list_files, read_file, write_file
 from shared.mcp.tools.media_processor import describe_image, text_to_speech, transcribe_audio
 from shared.mcp.tools.url_scraper import scrape_url
@@ -86,6 +87,16 @@ def tool_list_files(directory: str = ".") -> str:
 
 
 @tool
+def tool_send_email(to_email: str, subject: str, body: str) -> str:
+    """Send an email. Use when the user asks to email something (reports, summaries, news).
+    Requires SMTP_HOST, SMTP_USER, SMTP_PASSWORD in environment. For Gmail, use an App Password."""
+    result = send_email(to_email=to_email, subject=subject, body=body)
+    if result["success"]:
+        return result["message"]
+    return f"Email failed: {result.get('message', result.get('error', 'Unknown error'))}"
+
+
+@tool
 def tool_transcribe_audio(file_path: str) -> str:
     """Transcribe an audio file to text using OpenAI Whisper."""
     result = transcribe_audio(file_path=file_path)
@@ -118,7 +129,7 @@ def tool_describe_image(file_path: str) -> str:
 TOOL_REGISTRY: dict[str, list] = {
     "research": [tool_web_search, tool_scrape_url],
     "analysis": [tool_web_search, tool_execute_python, tool_read_file],
-    "generator": [tool_web_search, tool_write_file, tool_read_file, tool_execute_python],
+    "generator": [tool_web_search, tool_write_file, tool_read_file, tool_execute_python, tool_send_email],
     "code": [tool_execute_python, tool_read_file, tool_write_file, tool_list_files],
     "monitor": [tool_web_search, tool_scrape_url],
     "chat": [],
@@ -131,6 +142,7 @@ ALL_TOOLS = [
     tool_read_file,
     tool_write_file,
     tool_list_files,
+    tool_send_email,
     tool_transcribe_audio,
     tool_text_to_speech,
     tool_describe_image,

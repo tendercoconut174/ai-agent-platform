@@ -94,8 +94,14 @@ async def execute(state: WorkflowState) -> WorkflowState:
     results: list[StepResult] = list(state.get("step_results", []))
     completed_ids = {r.node_id for r in results}
     history = state.get("conversation_history") or []
+    deadline = state.get("deadline", float("inf"))
 
     while len(completed_ids) < len(exec_plan.steps):
+        remaining = deadline - time.perf_counter()
+        if remaining < 20:
+            logger.warning("[execute] deadline approaching (%.1fs left), stopping early", remaining)
+            break
+
         ready = _find_ready_steps(exec_plan, completed_ids, set())
         if not ready:
             break

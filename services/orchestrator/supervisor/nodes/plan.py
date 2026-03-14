@@ -49,17 +49,37 @@ class PlanOutput(BaseModel):
 PLAN_SYSTEM = (
     "You are a task planner for an AI agent platform. "
     "Break down the user's goal into execution steps. Each step is handled by a specialized agent.\n\n"
+    "Available agent types and their capabilities:\n"
+    "- research: web search, data gathering from the internet (tools: web_search, scrape_url)\n"
+    "- analysis: summarize, compare, extract patterns (tools: web_search, execute_python, read_file)\n"
+    "- generator: create reports, documents, structured output, SEND EMAIL (tools: web_search, write_file, read_file, execute_python, send_email)\n"
+    "- code: write and execute Python code for calculations/data processing (tools: execute_python, read_file, write_file)\n"
+    "- monitor: web search and scrape for tracking tasks (tools: web_search, scrape_url)\n"
+    "- chat: casual conversation (no tools)\n\n"
+    "Platform LIMITATIONS (capabilities NOT available):\n"
+    "- NO scheduling/cron -- all tasks execute immediately in a single request, cannot run for hours or on intervals\n"
+    "- NO file upload to external services -- cannot post to social media, upload to cloud storage, etc.\n"
+    "- NO database access -- cannot query or write to external databases\n"
+    "- NO browser interaction -- cannot fill forms, click buttons, or log into websites\n"
+    "- Code execution is sandboxed -- only standard library modules (math, json, re, datetime, collections, etc.)\n\n"
     "Rules:\n"
     "- Use the fewest steps necessary. A single-step plan is fine for simple goals.\n"
     "- Set dependencies correctly: a step that needs results from step_1 should list ['step_1'] in dependencies.\n"
     "- Steps with no dependencies can run in parallel.\n"
-    "- Use 'research' for anything requiring web search or data gathering.\n"
-    "- Use 'generator' for the final step when structured output (tables, reports) is needed.\n"
+    "- If the user asks for something the platform CANNOT do (e.g. send email, run for 1 hour), "
+    "plan only the parts that ARE possible (e.g. research + analysis) and include a note in the last step "
+    "that the unsupported parts (email, scheduling) are not yet available.\n"
+    "- Each step should complete in under 60 seconds. Break large tasks into smaller pieces.\n"
     "- Do NOT use 'chat' for tasks that need tools or research."
 )
 
 
-async def _plan_with_llm(goal: str, output_format: str = "json") -> ExecutionPlan:
+async def _plan_with_llm(
+    goal: str,
+    output_format: str = "json",
+    iteration: int = 0,
+    previous_feedback: str = "",
+) -> ExecutionPlan:
     from shared.llm import get_llm
 
     llm = get_llm("planner", temperature=0)
@@ -70,17 +90,26 @@ async def _plan_with_llm(goal: str, output_format: str = "json") -> ExecutionPla
     if format_hint:
         user_msg += f"\n\nOutput format instruction: {format_hint}"
 
+    if iteration > 0 and previous_feedback:
+        user_msg += (
+            f"\n\nIMPORTANT: This is attempt #{iteration + 1}. "
+            f"The previous plan failed:\n{previous_feedback}\n"
+            f"Create a DIFFERENT plan that avoids the same issues. "
+            f"Use different step IDs (e.g. step_{iteration}a, step_{iteration}b)."
+        )
+
     result: PlanOutput = await structured_llm.ainvoke([
         {"role": "system", "content": PLAN_SYSTEM},
         {"role": "user", "content": user_msg},
     ])
 
+    prefix = f"i{iteration}_" if iteration > 0 else ""
     steps = [
         PlanStep(
-            node_id=s.node_id,
+            node_id=f"{prefix}{s.node_id}",
             agent_type=s.agent_type,
             message=s.message,
-            dependencies=s.dependencies,
+            dependencies=[f"{prefix}{d}" for d in s.dependencies],
         )
         for s in result.steps
     ]
@@ -89,6 +118,19 @@ async def _plan_with_llm(goal: str, output_format: str = "json") -> ExecutionPla
         steps[-1].message += f" {format_hint}"
 
     return ExecutionPlan(steps=steps, reasoning=result.reasoning)
+
+
+def _build_previous_feedback(state: WorkflowState) -> str:
+    """Summarize previous step results for the planner to learn from failures."""
+    prev_results = state.get("step_results") or []
+    if not prev_results:
+        return ""
+    lines = []
+    for r in prev_results:
+        status = "OK" if r.success else f"FAILED: {r.error or 'unknown'}"
+        snippet = (r.result or "")[:200]
+        lines.append(f"- {r.node_id} ({r.agent_type}): {status} | output: {snippet}")
+    return "\n".join(lines)
 
 
 async def plan(state: WorkflowState) -> WorkflowState:
@@ -101,8 +143,10 @@ async def plan(state: WorkflowState) -> WorkflowState:
 
     from shared.llm import is_llm_available
 
+    previous_feedback = _build_previous_feedback(state) if iteration > 0 else ""
+
     if is_llm_available("planner"):
-        execution_plan = await _plan_with_llm(goal, output_format)
+        execution_plan = await _plan_with_llm(goal, output_format, iteration, previous_feedback)
     else:
         execution_plan = ExecutionPlan(
             steps=[PlanStep(node_id="step_1", agent_type="research", message=goal)],
@@ -115,6 +159,6 @@ async def plan(state: WorkflowState) -> WorkflowState:
     return {
         **state,
         "plan": execution_plan,
-        "step_results": state.get("step_results", []),
+        "step_results": [],
         "current_step_index": 0,
     }

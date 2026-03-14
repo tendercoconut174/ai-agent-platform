@@ -163,6 +163,11 @@ For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file downl
 | `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL connection URL |
 | `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway) |
 | `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace directory for file_io tool |
+| `SMTP_HOST` | `smtp.gmail.com` | SMTP server for email sending |
+| `SMTP_PORT` | `587` | SMTP port (587 for TLS) |
+| `SMTP_USER` | -- | SMTP username (usually your email) |
+| `SMTP_PASSWORD` | -- | SMTP password (for Gmail, use an [App Password](https://support.google.com/accounts/answer/185833)) |
+| `SMTP_FROM` | same as SMTP_USER | Sender email address |
 
 ### LLM Provider Examples
 

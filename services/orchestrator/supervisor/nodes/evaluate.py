@@ -51,11 +51,17 @@ async def evaluate(state: WorkflowState) -> WorkflowState:
     final_result = state.get("final_result", "")
     iteration = state.get("iteration_count", 0) + 1
     max_iter = state.get("max_iterations", 5)
+    deadline = state.get("deadline", float("inf"))
 
     logger.info("[evaluate] START | iteration=%d/%d | result_len=%d", iteration, max_iter, len(final_result or ""))
 
     if iteration >= max_iter:
         logger.info("[evaluate] DONE  | max iterations reached, accepting | %.2fs", time.perf_counter() - t0)
+        return {**state, "iteration_count": iteration, "goal_achieved": True}
+
+    remaining = deadline - time.perf_counter()
+    if remaining < 15:
+        logger.warning("[evaluate] DONE  | deadline approaching (%.1fs left), accepting current result | %.2fs", remaining, time.perf_counter() - t0)
         return {**state, "iteration_count": iteration, "goal_achieved": True}
 
     if not final_result or state.get("error"):

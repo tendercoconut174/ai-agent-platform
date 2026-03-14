@@ -1,5 +1,6 @@
 """Base agent factory – creates async ReAct agents with MCP tools."""
 
+import asyncio
 import logging
 import warnings
 from collections.abc import Awaitable, Callable
@@ -10,6 +11,8 @@ from shared.llm import get_llm, is_llm_available
 from shared.mcp.server import get_tools_for_agent
 
 logger = logging.getLogger(__name__)
+
+AGENT_TIMEOUT_SECONDS = 90
 
 
 def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], Awaitable[str]]:
@@ -24,6 +27,13 @@ def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], A
     """
     tools = get_tools_for_agent(agent_type)
 
+    async def _invoke_agent(agent, message: str) -> dict:
+        """Invoke agent with a timeout guard."""
+        return await asyncio.wait_for(
+            agent.ainvoke({"messages": [{"role": "user", "content": message}]}),
+            timeout=AGENT_TIMEOUT_SECONDS,
+        )
+
     async def run(message: str) -> str:
         if not is_llm_available("agents"):
             return f"[{agent_type}] No LLM API key configured. Message: {message}"
@@ -32,7 +42,12 @@ def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], A
 
         llm = get_llm("agents", temperature=0)
         agent = create_agent(llm, tools, system_prompt=system_prompt)
-        result = await agent.ainvoke({"messages": [{"role": "user", "content": message}]})
+
+        try:
+            result = await _invoke_agent(agent, message)
+        except asyncio.TimeoutError:
+            logger.error("[agent:%s] TIMED OUT after %ds", agent_type, AGENT_TIMEOUT_SECONDS)
+            return f"[{agent_type}] Agent timed out after {AGENT_TIMEOUT_SECONDS}s. The task may be too complex for a single step."
 
         messages = result.get("messages", [])
         tool_calls = sum(1 for m in messages if getattr(m, "type", "") == "tool")
@@ -46,7 +61,11 @@ def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], A
                 f"You MUST call at least one tool before answering. "
                 f"Do NOT answer from memory.\n\nRequest: {message}"
             )
-            result = await agent.ainvoke({"messages": [{"role": "user", "content": retry_msg}]})
+            try:
+                result = await _invoke_agent(agent, retry_msg)
+            except asyncio.TimeoutError:
+                logger.error("[agent:%s] retry TIMED OUT after %ds", agent_type, AGENT_TIMEOUT_SECONDS)
+                return f"[{agent_type}] Agent timed out on retry."
             messages = result.get("messages", [])
             retry_tool_calls = sum(1 for m in messages if getattr(m, "type", "") == "tool")
             logger.info("[agent:%s] retry finished | %d messages | %d tool calls", agent_type, len(messages), retry_tool_calls)

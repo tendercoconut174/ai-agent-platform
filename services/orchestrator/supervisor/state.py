@@ -58,6 +58,9 @@ class WorkflowState(TypedDict, total=False):
     max_iterations: int
     goal_achieved: bool
 
+    # Timing
+    deadline: float  # time.perf_counter() value after which we must stop
+
     # Output
     final_result: Optional[str]
     error: Optional[str]

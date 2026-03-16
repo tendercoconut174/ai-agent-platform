@@ -29,7 +29,8 @@ Synchronous message endpoint. Sends the user message to the orchestrator, waits 
   "mode": "auto",
   "session_id": null,
   "callback_url": null,
-  "metadata": null
+  "metadata": null,
+  "workflow_id": null
 }
 ```
 
@@ -41,6 +42,7 @@ Synchronous message endpoint. Sends the user message to the orchestrator, waits 
 | `session_id` | string | no | auto-generated | Session ID for conversation continuity |
 | `callback_url` | string | no | null | Webhook URL for async result delivery |
 | `metadata` | object | no | null | Extra context |
+| `workflow_id` | string | no | null | When resuming after clarification: the `workflow_id` from the `needs_clarification` response |
 
 **Output Format Auto-Detection:**
 
@@ -60,6 +62,33 @@ The format hint is stripped from the message before it reaches the orchestrator,
   "content_base64": null,
   "content_type": null,
   "filename": null,
+  "session_id": "bd87e8c8-d6e7-4d28-87e1-da4685ef5b1b",
+  "needs_clarification": false,
+  "question": null
+}
+```
+
+**Response (needs clarification – human-in-the-loop):**
+
+When the request is too vague or ambiguous, the response includes:
+
+```json
+{
+  "result": "Which industry or sector are you interested in?",
+  "workflow_id": "4f076e33-f859-437a-ab4a-038d6a05873e",
+  "output_format": "json",
+  "session_id": "bd87e8c8-d6e7-4d28-87e1-da4685ef5b1b",
+  "needs_clarification": true,
+  "question": "Which industry or sector are you interested in?"
+}
+```
+
+To resume, send a follow-up with the same `session_id` and the **`workflow_id` from the needs_clarification response** (not an older workflow_id), and your clarification as `message`:
+
+```json
+{
+  "message": "tech sector",
+  "workflow_id": "4f076e33-f859-437a-ab4a-038d6a05873e",
   "session_id": "bd87e8c8-d6e7-4d28-87e1-da4685ef5b1b"
 }
 ```
@@ -203,6 +232,8 @@ class MessageResponse(BaseModel):
     content_type: Optional[str] = None
     filename: Optional[str] = None
     session_id: Optional[str] = None
+    needs_clarification: bool = False
+    question: Optional[str] = None  # Clarifying question when needs_clarification is true
 ```
 
 ### WorkflowResponse
@@ -260,6 +291,24 @@ curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"message": "give me excel of top 10 countries by GDP"}' \
   --output result.xlsx
+```
+
+### Human-in-the-Loop (Clarification)
+
+```bash
+# Step 1: Vague request – receive clarifying question
+RESP=$(curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "research companies"}')
+echo $RESP | jq .
+# {"result": "Which industry?", "workflow_id": "uuid", "needs_clarification": true, "question": "Which industry?", ...}
+
+# Step 2: Resume with clarification
+WF_ID=$(echo $RESP | jq -r '.workflow_id')
+SESSION=$(echo $RESP | jq -r '.session_id')
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"tech sector\", \"workflow_id\": \"$WF_ID\", \"session_id\": \"$SESSION\"}"
 ```
 
 ### Explicit Format

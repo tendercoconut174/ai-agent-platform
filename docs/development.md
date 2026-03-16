@@ -6,7 +6,7 @@
 |------------|---------|-------|
 | Python | >= 3.14 | Managed via `.python-version` |
 | uv | latest | [Install guide](https://docs.astral.sh/uv/) |
-| Docker + Docker Compose | latest | For Redis and PostgreSQL |
+| Docker + Docker Compose | latest | For PostgreSQL (optional) |
 | OpenAI API key | -- | Required for LLM features |
 
 ## Initial Setup
@@ -32,9 +32,6 @@ EOF
 Sessions stored in-memory (lost on restart). Simplest setup for development.
 
 ```bash
-# Start Redis only
-docker compose up -d redis
-
 # Terminal 1 -- Orchestrator
 uv run python main.py orchestrator
 
@@ -47,8 +44,8 @@ uv run python main.py gateway
 Sessions persisted to database.
 
 ```bash
-# Start Redis + PostgreSQL
-docker compose up -d redis postgres
+# Start PostgreSQL
+docker compose up -d postgres
 
 # Run database migrations
 uv run python main.py migrate
@@ -66,14 +63,17 @@ uv run python main.py gateway
 docker compose up -d
 ```
 
-This starts gateway (8000), orchestrator (8001), worker, redis (6379), and postgres (5432).
+This starts gateway (8000), orchestrator (8001), and postgres (5432).
+
+## Test UI
+
+Open `http://localhost:8000` (or `http://localhost:8000/ui/`) to use the web test UI. It provides a chat interface, workflow steps panel, session management, and output format selection.
 
 ## CLI Commands
 
 ```bash
 uv run python main.py gateway       # Start gateway on port 8000
 uv run python main.py orchestrator   # Start orchestrator on port 8001
-uv run python main.py worker         # Start background worker
 uv run python main.py migrate        # Run Alembic migrations
 ```
 
@@ -94,8 +94,6 @@ OPENAI_API_KEY=sk-...
 
 # Optional (defaults shown)
 OPENAI_MODEL=gpt-4o-mini
-REDIS_HOST=localhost
-REDIS_PORT=6379
 DATABASE_URL=postgresql://dev:dev@localhost:5432/agent_platform
 ORCHESTRATOR_URL=http://localhost:8001
 FILE_WORKSPACE=/tmp/agent_workspace
@@ -231,12 +229,10 @@ services/
   orchestrator/             # Workflow orchestration (port 8001)
   agents/                   # Agent pool (6 specialized agents)
   delivery/                 # Output formatting (PDF, Excel, audio)
-  workers/                  # Background worker process
 shared/
   models/                   # ORM models + Pydantic schemas
   mcp/                      # MCP tool system
     tools/                  # Individual tool implementations
-platform_queue/             # Redis Streams task queue
 tests/                      # Test suite
 docs/                       # Documentation
 ```

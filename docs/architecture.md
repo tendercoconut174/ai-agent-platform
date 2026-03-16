@@ -4,7 +4,7 @@
 
 The AI Agent Platform is a goal-oriented, multi-agent system that accepts user tasks, decomposes them into executable plans, dispatches specialized agents, evaluates results, and delivers output in the requested format.
 
-The system is split into two FastAPI services (Gateway and Orchestrator), a shared agent pool, an MCP tool layer, and supporting infrastructure (Redis, PostgreSQL).
+The system is split into two FastAPI services (Gateway and Orchestrator), a shared agent pool, an MCP tool layer, and supporting infrastructure (PostgreSQL).
 
 ## High-Level Flow
 
@@ -38,7 +38,10 @@ The system is split into two FastAPI services (Gateway and Orchestrator), a shar
                           │  │     ▼          replan   evaluate   │  │
                           │  │  chat_respond              │       │  │
                           │  │     │                      ▼       │  │
-                          │  │     └──────► deliver ◄─── done     │  │
+                          │  │     │needs_clarification   done    │  │
+                          │  │     ▼                      │       │  │
+                          │  │  ask_user ──► END          │       │  │
+                          │  │     └──────► deliver ◄─────┘       │  │
                           │  └────────────────────────────────────┘  │
                           └────────────────────┬─────────────────────┘
                                                │
@@ -87,16 +90,21 @@ A compiled LangGraph `StateGraph` with the following nodes:
 
 | Node | Purpose |
 |------|---------|
-| **classify** | Determines user intent: `casual`, `simple`, `complex`, or `monitor` |
+| **classify** | Determines user intent: `casual`, `simple`, `complex`, `monitor`, or `needs_clarification` |
 | **chat_respond** | Direct LLM response for casual messages (no planning) |
+| **ask_user** | Human-in-the-loop: generates a clarifying question when the goal is vague or ambiguous |
 | **plan** | LLM generates a DAG of `PlanStep`s with agent types, messages, and dependencies |
 | **execute** | Dispatches steps to agents, respecting dependencies; parallelizes independent steps |
 | **evaluate** | LLM evaluates whether the result satisfies the user's goal |
 | **deliver** | Formats the final result text |
 
+#### Follow-up Context
+
+When the user sends a follow-up (e.g. "can you write one with python" after asking about a calculator app), the planner and agents receive conversation history so they can resolve references like "one", "it", "that". The plan node includes the last 6 messages in the planner prompt; the execute node prepends conversation context to each agent's task message.
+
 #### Routing Logic
 
-- After **classify**: casual intent → `chat_respond`; anything else → `plan`
+- After **classify**: casual → `chat_respond`; needs_clarification → `ask_user` (→ END); otherwise → `plan`
 - After **evaluate**: goal achieved → `deliver`; not achieved → `plan` (replan loop, max 5 iterations)
 
 #### Workflow State
@@ -115,6 +123,8 @@ class WorkflowState(TypedDict, total=False):
     goal_achieved: bool
     final_result: Optional[str]
     error: Optional[str]
+    needs_clarification: bool       # Human-in-the-loop: workflow paused for user input
+    clarification_question: Optional[str]
 ```
 
 ### Agent Pool (`services/agents/`)
@@ -159,6 +169,14 @@ Converts the text result into the requested output format:
 - **Excel**: `openpyxl` parsing markdown tables into cells with bold headers
 - **Audio**: OpenAI TTS to MP3, base64-encoded
 
+### Human-in-the-Loop (Clarification)
+
+When the classifier detects a vague or ambiguous request (`needs_clarification` intent), the supervisor routes to the **ask_user** node. This node uses the LLM to generate a clarifying question and pauses the workflow. The response includes `needs_clarification: true`, `question`, and `workflow_id`. The gateway persists this state in `pending_clarifications` (PostgreSQL or in-memory). The user can resume by sending a follow-up message with the same `session_id` and `workflow_id`, including their clarification. The gateway merges the original goal with the clarification and runs a fresh workflow.
+
+**Flow:**
+1. User: `{"message": "research companies"}` → Response: `{"needs_clarification": true, "question": "Which industry?", "workflow_id": "..."}`
+2. User: `{"message": "tech sector", "workflow_id": "..."}` → Gateway merges goal, runs workflow, returns result
+
 ### Session Manager (`services/gateway/session_manager.py`)
 
 Provides conversation continuity:
@@ -167,20 +185,11 @@ Provides conversation continuity:
 - Gracefully falls back to in-memory storage when PostgreSQL is unreachable
 - Database availability is checked once at startup and cached
 
-### Task Queue (`platform_queue/task_queue.py`)
-
-Redis Streams-based task queue for async/background execution:
-
-- `enqueue_task` → `XADD` to `task_stream`
-- `consume_task` → `XREADGROUP` with consumer groups
-- `push_result` / `wait_for_result` → Redis lists for result exchange
-- `publish_progress` → Redis Pub/Sub for real-time progress
-
 ### Database (`database/`)
 
 - **Engine**: SQLAlchemy with `psycopg2` (sync) driver
 - **Migrations**: Alembic with autogenerate support
-- **Tables**: `sessions`, `message_history`, `workflows`, `workflow_steps`
+- **Tables**: `sessions`, `message_history`, `workflows`, `workflow_steps`, `pending_clarifications`
 
 ## Data Flow: Complex Task Example
 
@@ -197,6 +206,20 @@ Redis Streams-based task queue for async/background execution:
 8. **Supervisor.deliver**: Returns final text to Orchestrator
 9. **Delivery Service**: Parses markdown table into Excel cells, base64-encodes the XLSX
 10. **Gateway**: Decodes base64, returns binary XLSX with `Content-Disposition: attachment`
+
+## Data Flow: Human-in-the-Loop (Clarification) Example
+
+1. User sends: `{"message": "research companies"}`
+2. **Gateway** creates session, forwards to Orchestrator
+3. **Supervisor.classify**: LLM detects `needs_clarification` (too vague)
+4. **Supervisor.ask_user**: LLM generates: "Which industry or sector are you interested in?"
+5. **Orchestrator** returns `{needs_clarification: true, question: "...", workflow_id: "..."}` without calling deliver
+6. **Gateway** saves pending clarification (original_goal, question, output_format) and returns to user
+7. User sends: `{"message": "tech sector", "workflow_id": "..."}`
+8. **Gateway** loads pending clarification, merges: "research companies\n\n[User clarification] tech sector"
+9. **Gateway** forwards merged goal to Orchestrator (normal flow)
+10. **Supervisor** runs classify → plan → execute → evaluate → deliver
+11. **Gateway** returns final result
 
 ## Data Flow: Casual Chat Example
 
@@ -216,7 +239,6 @@ Redis Streams-based task queue for async/background execution:
 | Agent framework | LangChain + LangGraph |
 | LLM | OpenAI (gpt-4o-mini default) |
 | Database | PostgreSQL 15 + SQLAlchemy + Alembic |
-| Queue | Redis 7 (Streams + Pub/Sub) |
 | HTTP client | httpx |
 | PDF generation | fpdf2 |
 | Excel generation | openpyxl |

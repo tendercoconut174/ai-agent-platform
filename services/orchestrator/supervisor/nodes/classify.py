@@ -17,19 +17,24 @@ class Intent(str, Enum):
     simple = "simple"
     complex = "complex"
     monitor = "monitor"
+    needs_clarification = "needs_clarification"
 
 
 class Classification(BaseModel):
     """Structured classification result from the LLM."""
 
-    intent: Literal["casual", "simple", "complex", "monitor"] = Field(
+    intent: Literal["casual", "simple", "complex", "monitor", "needs_clarification"] = Field(
         description=(
             "casual: greetings, small talk, personal/context-dependent questions "
             "(e.g. 'what is my name', 'who am I', 'tell me more', 'what did I say earlier'), "
             "follow-ups referencing previous conversation, short conversational messages. "
-            "simple: single-step factual task requiring one tool call (one web search, one calculation, a quick factual answer). "
-            "complex: multi-step task needing research, data gathering, analysis, comparison, report generation, or structured output. "
-            "monitor: long-running observation, tracking, or alerting task over a period of time."
+            "simple: single-step factual task requiring one web search or calculation. "
+            "complex: multi-step task needing research, data gathering, analysis, comparison, report generation. "
+            "monitor: long-running observation, tracking, or alerting task over a period of time. "
+            "needs_clarification: ONLY when the request is truly too vague to execute at all. "
+            "Examples: 'research companies' (no industry), 'create a report' (no topic), 'compare them' (no context). "
+            "Do NOT use when the user has specified a topic, industry, or scope (e.g. 'petroleum companies', "
+            "'business impact of Iran war', 'tech sector') — those are simple or complex."
         )
     )
     reasoning: str = Field(description="One-sentence explanation of why this intent was chosen")
@@ -41,15 +46,20 @@ CLASSIFY_SYSTEM = (
     "Classify the user's LATEST message into exactly one category.\n\n"
     "Guidelines:\n"
     "- casual: greetings, small talk, follow-up questions that reference the previous conversation "
-    "(e.g. 'who was last year', 'tell me more', 'what about X', 'and the previous one?'), "
-    "short/vague messages that only make sense with context, personal questions.\n"
-    "- simple: a standalone factual question that requires one web search or calculation. "
-    "The message must be self-contained -- it should make complete sense without any conversation history.\n"
-    "- complex: multi-step task needing research, data gathering, analysis, comparison, report generation, or structured output.\n"
-    "- monitor: long-running observation, tracking, or alerting task over a period of time.\n\n"
-    "CRITICAL: If the message is short/vague and the conversation history exists, it is almost certainly "
-    "a follow-up (casual). A follow-up sent to research would lose all conversation context. "
-    "When in doubt, prefer casual."
+    "(e.g. 'who was last year', 'tell me more', 'what about X'), short messages that need context.\n"
+    "- simple: a factual question or task that requires one web search or calculation. "
+    "If the user specified a topic, industry, or scope (e.g. 'petroleum companies', 'Iran war', 'tech sector'), "
+    "it is usually simple or complex — NOT needs_clarification.\n"
+    "- complex: multi-step task needing research, data gathering, analysis, comparison, report generation.\n"
+    "- monitor: long-running observation, tracking, or alerting task over a period of time.\n"
+    "- needs_clarification: ONLY when the request is truly too vague to execute. Examples: "
+    "'research companies' (no industry), 'create a report' (no topic), 'compare them' (no context), "
+    "'find the best one' (no criteria). "
+    "Do NOT use needs_clarification when the user has given a specific topic (e.g. 'business impact of Iran war', "
+    "'petroleum companies', 'tech sector'). Prefer simple or complex in those cases.\n"
+    "If the message contains '[User clarification]', the user already provided clarification — use simple or complex.\n\n"
+    "CRITICAL: When in doubt, prefer simple or complex over needs_clarification. "
+    "It is better to attempt execution than to ask for more details when the request is reasonably specific."
 )
 
 _MAX_HISTORY_FOR_CLASSIFY = 6
@@ -87,6 +97,11 @@ async def classify(state: WorkflowState) -> WorkflowState:
     goal = state.get("goal", "")
     history = state.get("conversation_history") or []
     logger.info("[classify] START | goal=%s | history=%d msgs", goal[:120], len(history))
+
+    # User already provided clarification — never ask again; route to plan
+    if "[User clarification]" in goal:
+        logger.info("[classify] DONE  | intent=complex (has clarification) | %.2fs", time.perf_counter() - t0)
+        return {**state, "intent": "complex"}
 
     from shared.llm import is_llm_available
 

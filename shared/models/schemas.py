@@ -17,6 +17,10 @@ class MessageRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Session ID for conversation continuity")
     callback_url: Optional[str] = Field(default=None, description="Webhook URL for async result delivery")
     metadata: Optional[dict] = Field(default=None, description="Extra context for the request")
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="When resuming after clarification: the workflow_id from the needs_clarification response",
+    )
 
 
 class WorkflowResponse(BaseModel):
@@ -49,6 +53,16 @@ class StepStatus(BaseModel):
     error: Optional[str] = None
 
 
+class StepResultSummary(BaseModel):
+    """Summary of a workflow step for UI display."""
+
+    node_id: str
+    agent_type: str
+    result: Optional[str] = None
+    error: Optional[str] = None
+    success: bool = True
+
+
 class MessageResponse(BaseModel):
     """Response for sync /message endpoint."""
 
@@ -59,6 +73,10 @@ class MessageResponse(BaseModel):
     content_type: Optional[str] = None
     filename: Optional[str] = None
     session_id: Optional[str] = None
+    needs_clarification: bool = False
+    question: Optional[str] = Field(default=None, description="Clarifying question when needs_clarification is true")
+    intent: Optional[str] = None
+    step_results: Optional[list[StepResultSummary]] = Field(default=None, description="Workflow steps executed")
 
 
 class HealthResponse(BaseModel):
@@ -77,6 +95,10 @@ class OrchestratorRequest(BaseModel):
     session_id: Optional[str] = None
     callback_url: Optional[str] = None
     conversation_history: list[dict[str, str]] = Field(default_factory=list)
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="When resuming: workflow_id from needs_clarification response",
+    )
 
 
 class TaskPayload(BaseModel):

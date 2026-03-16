@@ -1,6 +1,6 @@
 ---
 name: devops-skill
-description: Run the project locally or with Docker, manage Redis and PostgreSQL, build images, and deploy. Use when the user asks how to run, start, or test the application, or when working with Docker, docker-compose, or local development.
+description: Run the project locally or with Docker, manage PostgreSQL, build images, and deploy. Use when the user asks how to run, start, or test the application, or when working with Docker, docker-compose, or local development.
 ---
 
 # DevOps Skill -- AI Agent Platform
@@ -10,7 +10,7 @@ description: Run the project locally or with Docker, manage Redis and PostgreSQL
 Use this skill when:
 
 - Running the project locally or with Docker
-- Managing Redis, PostgreSQL, and other dependencies
+- Managing PostgreSQL and other dependencies
 - Building or deploying services
 - Configuring environment variables
 - Debugging connection issues
@@ -25,8 +25,6 @@ Use this skill when:
 Sessions stored in-memory (lost on restart).
 
 ```bash
-docker compose up -d redis
-
 # Terminal 1
 uv run python main.py orchestrator
 
@@ -37,7 +35,7 @@ uv run python main.py gateway
 ## Full stack (with PostgreSQL)
 
 ```bash
-docker compose up -d redis postgres
+docker compose up -d postgres
 uv run python main.py migrate
 
 # Terminal 1
@@ -65,8 +63,6 @@ curl -X POST http://localhost:8000/message \
 |---------|------|------|-------|
 | gateway | gateway | 8000 | User-facing API |
 | orchestrator | orchestrator | 8001 | Workflow orchestration |
-| worker | worker | -- | Background task consumer |
-| redis | redis | 6379 | Task queue and pub/sub |
 | postgres | postgres | 5432 | Persistent storage |
 
 All services use `dns: [8.8.8.8, 8.8.4.4]` for external DNS resolution.
@@ -80,7 +76,6 @@ uv run python main.py gateway                    # Start gateway (port 8000)
 uv run python main.py gateway --port 9000        # Custom port
 uv run python main.py orchestrator               # Start orchestrator (port 8001)
 uv run python main.py orchestrator --port 9001   # Custom port
-uv run python main.py worker                     # Start background worker
 uv run python main.py migrate                    # Run Alembic migrations
 ```
 
@@ -94,11 +89,11 @@ Create a `.env` file in project root. Loaded automatically via `python-dotenv`.
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | -- | Required for LLM features |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model for agents and planner |
-| `REDIS_HOST` | `localhost` | Redis host (`redis` in Docker) |
-| `REDIS_PORT` | `6379` | Redis port |
 | `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL URL |
 | `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator URL (`http://orchestrator:8001` in Docker) |
 | `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace for file_io tool |
+
+Note: Redis and the worker are no longer used. The orchestrator runs agents in-process.
 
 ---
 

@@ -30,6 +30,14 @@ async def _run_agent(
         message = step.message
         if context:
             message = f"Previous context:\n{context}\n\nCurrent task: {message}"
+        # Inject conversation history for follow-up context (all agents except chat)
+        if conversation_history and step.agent_type != "chat":
+            conv_ctx = _format_conversation_for_agent(conversation_history)
+            if conv_ctx:
+                message = (
+                    f"=== CONVERSATION CONTEXT (user's follow-up; resolve 'one', 'it', 'that') ===\n"
+                    f"{conv_ctx}\n\n=== TASK ===\n{message}"
+                )
 
         if step.agent_type == "chat" and conversation_history:
             from services.agents import chat_agent
@@ -66,6 +74,24 @@ def _get_context(step: PlanStep, results: list[StepResult]) -> str:
         if dep_id in result_map:
             context_parts.append(f"[{dep_id}]: {result_map[dep_id]}")
     return "\n\n".join(context_parts)
+
+
+def _format_conversation_for_agent(history: list[dict[str, str]], max_chars: int = 1200) -> str:
+    """Format conversation history for agent context. Truncates long responses."""
+    if not history:
+        return ""
+    lines = []
+    total = 0
+    for msg in history[-6:]:
+        role = msg.get("role", "user")
+        content = (msg.get("content") or "")[:600]
+        if total + len(content) > max_chars:
+            content = content[: max_chars - total - 20] + "..."
+        lines.append(f"{role.upper()}: {content}")
+        total += len(content)
+        if total >= max_chars:
+            break
+    return "\n".join(lines)
 
 
 def _find_ready_steps(
@@ -106,15 +132,31 @@ async def execute(state: WorkflowState) -> WorkflowState:
         if not ready:
             break
 
+        progress_queue = state.get("progress_queue")
+
         if len(ready) == 1:
             step = ready[0]
             context = _get_context(step, results)
             logger.info("Executing step %s (%s)", step.node_id, step.agent_type)
+            if progress_queue:
+                await progress_queue.put({"type": "step_start", "node_id": step.node_id, "agent_type": step.agent_type})
             result = await _run_agent(step, context, conversation_history=history)
             results.append(result)
             completed_ids.add(step.node_id)
+            if progress_queue:
+                await progress_queue.put({
+                    "type": "step_done",
+                    "node_id": result.node_id,
+                    "agent_type": result.agent_type,
+                    "result": (result.result or "")[:500],
+                    "error": result.error,
+                    "success": result.success,
+                })
         else:
             logger.info("Executing %d steps in parallel: %s", len(ready), [s.node_id for s in ready])
+            for s in ready:
+                if progress_queue:
+                    await progress_queue.put({"type": "step_start", "node_id": s.node_id, "agent_type": s.agent_type})
             tasks = [
                 _run_agent(step, _get_context(step, results), conversation_history=history)
                 for step in ready
@@ -123,6 +165,15 @@ async def execute(state: WorkflowState) -> WorkflowState:
             for result in batch_results:
                 results.append(result)
                 completed_ids.add(result.node_id)
+                if progress_queue:
+                    await progress_queue.put({
+                        "type": "step_done",
+                        "node_id": result.node_id,
+                        "agent_type": result.agent_type,
+                        "result": (result.result or "")[:500],
+                        "error": result.error,
+                        "success": result.success,
+                    })
 
     final = results[-1].result if results else ""
     all_results = "\n\n".join(

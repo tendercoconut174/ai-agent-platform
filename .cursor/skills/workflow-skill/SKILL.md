@@ -21,7 +21,7 @@ Use this skill when generating:
 
 The Supervisor is a **LangGraph StateGraph** that orchestrates the entire workflow. It classifies intent, plans execution as a DAG, dispatches agents, evaluates results, and replans if needed.
 
-**Flow:** classify → [chat_respond | plan → execute → evaluate → (replan | deliver)]
+**Flow:** classify → [chat_respond | ask_user | plan → execute → evaluate → (replan | deliver)]
 
 Workflows must be goal-oriented, observable, and support iterative refinement.
 
@@ -89,7 +89,7 @@ class ExecutionPlan(BaseModel):
     reasoning: str = ""
 ```
 
-The planner creates plans using LLM (with fallback to rule-based planning). Format hints are injected into the last step's message based on `output_format`.
+The planner creates plans using LLM (with fallback to rule-based planning). Format hints are injected into the last step's message based on `output_format`. When conversation history exists, the planner receives it to resolve follow-up references ("one", "it", "that").
 
 ---
 
@@ -97,7 +97,8 @@ The planner creates plans using LLM (with fallback to rule-based planning). Form
 
 | Node | File | Purpose |
 |------|------|---------|
-| **classify** | `nodes/classify.py` | Determine intent: casual, simple, complex, monitor |
+| **classify** | `nodes/classify.py` | Determine intent: casual, simple, complex, monitor, needs_clarification |
+| **ask_user** | `nodes/ask_user.py` | Human-in-the-loop: generate clarifying question when goal is vague |
 | **chat_respond** | `graph.py` | Direct LLM chat for casual intent (no planning) |
 | **plan** | `nodes/plan.py` | LLM-based DAG generation with format-aware instructions |
 | **execute** | `nodes/execute.py` | Dispatch steps to agents; parallel execution for independent steps |
@@ -111,9 +112,10 @@ The planner creates plans using LLM (with fallback to rule-based planning). Form
 The execute node (`nodes/execute.py`):
 
 1. Finds steps whose dependencies are all completed
-2. Runs independent steps in parallel via `ThreadPoolExecutor` (max 4 workers)
+2. Runs independent steps in parallel
 3. Passes dependency results as context to dependent steps
-4. Continues until all steps are executed or no more steps are ready
+4. Prepends conversation history to agent messages when present (for follow-up context)
+5. Continues until all steps are executed or no more steps are ready
 
 ---
 

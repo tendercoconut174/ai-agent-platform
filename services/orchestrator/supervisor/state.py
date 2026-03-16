@@ -64,3 +64,10 @@ class WorkflowState(TypedDict, total=False):
     # Output
     final_result: Optional[str]
     error: Optional[str]
+
+    # Human-in-the-loop
+    needs_clarification: bool
+    clarification_question: Optional[str]
+
+    # Streaming (internal, not serialized)
+    progress_queue: Any  # asyncio.Queue for streaming step updates

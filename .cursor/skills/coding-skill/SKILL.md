@@ -1,6 +1,6 @@
 ---
 name: coding-skill
-description: Generate Python code, API services, agents, workflows, workers, tools, and data models for the AI Agent Platform. Use when writing code, implementing features, or when the user mentions Python, FastAPI, Pydantic, or LangGraph.
+description: Generate Python code, API services, agents, workflows, tools, and data models for the AI Agent Platform. Use when writing code, implementing features, or when the user mentions Python, FastAPI, Pydantic, or LangGraph.
 ---
 
 # Code Skill -- AI Agent Platform
@@ -13,7 +13,6 @@ Use this skill whenever generating:
 - API services
 - agents
 - workflows
-- background workers
 - tools
 - data models
 - infrastructure integration code
@@ -40,7 +39,6 @@ All generated code must follow the standards defined in this document.
 
 ## Infrastructure
 
-- Redis -- task queues (Redis Streams) and pub/sub
 - PostgreSQL -- persistent storage (sessions, workflows)
 - Docker -- runtime environment
 

@@ -16,10 +16,6 @@ def run_gateway(host: str = "0.0.0.0", port: int = 8000) -> None:
     )
 
 
-def run_worker() -> None:
-    subprocess.run([sys.executable, "-m", "services.workers.worker_service"], check=True)
-
-
 def run_orchestrator(host: str = "0.0.0.0", port: int = 8001) -> None:
     subprocess.run(
         [sys.executable, "-m", "uvicorn", "services.orchestrator.main:app", "--host", host, "--port", str(port)],
@@ -39,8 +35,6 @@ def main() -> None:
     gw.add_argument("--host", default="0.0.0.0")
     gw.add_argument("--port", type=int, default=8000)
     gw.set_defaults(func=lambda a: run_gateway(a.host, a.port))
-
-    subparsers.add_parser("worker").set_defaults(func=lambda a: run_worker())
 
     orch = subparsers.add_parser("orchestrator")
     orch.add_argument("--host", default="0.0.0.0")

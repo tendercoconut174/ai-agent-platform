@@ -1,4 +1,8 @@
-"""Worker service – consumes tasks from Redis Streams and executes async agents."""
+"""Worker service – consumes tasks from Redis Streams and executes async agents.
+
+DEPRECATED: Not used in current architecture. The orchestrator runs agents in-process
+via the execute node. Kept for potential future async/background processing.
+"""
 
 import asyncio
 import logging

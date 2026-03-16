@@ -44,11 +44,11 @@ User
 - **Session continuity** -- PostgreSQL-backed conversation history with in-memory fallback
 - **MCP tools** -- agents use structured, discoverable tools rather than calling APIs directly
 - **Format-aware planning** -- the planner injects output format instructions so agents produce data suitable for the requested format
+- **Human-in-the-loop** -- when a request is vague or ambiguous, the supervisor asks for clarification; user can resume with `workflow_id`
 
 ## Prerequisites
 
 - Python >= 3.14
-- Redis (for task queue and pub/sub)
 - PostgreSQL (optional; falls back to in-memory)
 - [uv](https://docs.astral.sh/uv/) package manager
 
@@ -58,10 +58,8 @@ User
 # Install dependencies
 uv sync
 
-# Start infrastructure
-docker compose up -d redis postgres
-
-# Run database migrations
+# Optional: Start PostgreSQL for persistent sessions
+docker compose up -d postgres
 uv run python main.py migrate
 
 # Terminal 1 -- Orchestrator (port 8001)
@@ -72,6 +70,19 @@ uv run python main.py gateway
 ```
 
 PostgreSQL is optional. Without it, sessions are stored in-memory (lost on restart).
+
+## Test UI
+
+A web UI for testing the API is available at `http://localhost:8000/ui/` (or `http://localhost:8000/` which redirects there). It provides:
+
+- **Chat interface** — Send messages and view responses
+- **Steps panel** — See workflow steps (classify, plan, execute) as they complete
+- **Session management** — Session ID persisted in localStorage; "New session" to reset
+- **Workflow ID** — Displayed for clarification resume flow
+- **Output format** — JSON, PDF, Excel, Audio selector
+- **API URL** — Configurable (default `http://localhost:8000`)
+
+Start the gateway and open `http://localhost:8000` in your browser.
 
 ## API Usage
 
@@ -128,6 +139,7 @@ curl -X POST http://localhost:8000/message/upload \
 | `mode` | `auto` | `auto`, `chat`, `task` |
 | `session_id` | auto-generated | Session ID for conversation continuity |
 | `callback_url` | null | Webhook URL for async result delivery |
+| `workflow_id` | null | When resuming after clarification: the `workflow_id` from the `needs_clarification` response |
 
 ### Response Format
 
@@ -139,9 +151,13 @@ curl -X POST http://localhost:8000/message/upload \
   "content_base64": null,
   "content_type": null,
   "filename": null,
-  "session_id": "uuid"
+  "session_id": "uuid",
+  "needs_clarification": false,
+  "question": null
 }
 ```
+
+When the request is vague (`needs_clarification: true`), the response includes a `question` to ask the user. Resume by sending a follow-up with `workflow_id` and your clarification as `message`.
 
 For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file download with appropriate `Content-Type` and `Content-Disposition` headers.
 
@@ -158,8 +174,6 @@ For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file downl
 | `GOOGLE_API_KEY` | -- | API key for Google (when using Gemini) |
 | `GROQ_API_KEY` | -- | API key for Groq |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (for local models) |
-| `REDIS_HOST` | `localhost` | Redis host |
-| `REDIS_PORT` | `6379` | Redis port |
 | `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL connection URL |
 | `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway) |
 | `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace directory for file_io tool |
@@ -206,7 +220,7 @@ uv pip install "ai-agent-platform[all-llm]"    # All providers
 ## Project Structure
 
 ```
-main.py                              # CLI entry point: gateway, orchestrator, worker, migrate
+main.py                              # CLI entry point: gateway, orchestrator, migrate
 services/
   gateway/                           # Async FastAPI gateway service (port 8000)
     api/routes.py                    #   Async /message and /message/upload endpoints
@@ -236,9 +250,6 @@ services/
   delivery/                          # Output formatting
     delivery_service.py              #   PDF, Excel, Audio, JSON formatting
     formatters/audio.py              #   OpenAI TTS conversion
-  workers/                           # Redis Streams consumer
-    worker_service.py                #   Background worker process
-    execution/task_runner.py         #   Task routing to agents
 shared/
   llm.py                             # Centralized LLM factory (provider-agnostic get_llm)
   models/                            # Data models
@@ -255,15 +266,13 @@ shared/
       code_executor.py               #   Sandboxed Python execution
       file_io.py                     #   File read/write/list in workspace
       media_processor.py             #   Audio transcription, TTS, image description
-platform_queue/                      # Redis Streams task queue
-  task_queue.py                      #   enqueue, consume, ack, result helpers
 database/                            # Database layer
   connection.py                      #   SQLAlchemy engine + session factory
 alembic/                             # Database migrations
   env.py                             #   Migration environment
   versions/                          #   Migration scripts
 tests/                               # Test suite
-docker-compose.yml                   # Redis + PostgreSQL + services
+docker-compose.yml                   # PostgreSQL + gateway + orchestrator
 ```
 
 ## Testing
@@ -277,11 +286,11 @@ uv run pytest --tb=short  # short tracebacks
 ## Docker
 
 ```bash
-# Full stack
+# Full stack (gateway, orchestrator, postgres)
 docker compose up -d
 
-# Infrastructure only (for local dev)
-docker compose up -d redis postgres
+# PostgreSQL only (for local dev)
+docker compose up -d postgres
 ```
 
 ## Supervisor Flow Detail

@@ -1,6 +1,6 @@
 ---
 name: architectural-skill
-description: Generate services, agents, workflows, queues, and orchestration logic. Use when designing services, architecture, or when the user mentions gateway, supervisor, orchestrator, planner, or delivery.
+description: Generate services, agents, workflows, and orchestration logic. Use when designing services, architecture, or when the user mentions gateway, supervisor, orchestrator, planner, or delivery.
 ---
 
 # Architecture Skill -- AI Agent Platform
@@ -12,7 +12,6 @@ Use this skill when generating:
 - services
 - agents
 - workflows
-- queues
 - orchestration logic
 - infrastructure code
 
@@ -35,7 +34,7 @@ Gateway (FastAPI, port 8000)
   ▼
 Orchestrator (FastAPI, port 8001)
   └── Supervisor (LangGraph StateGraph)
-        classify → plan → execute → evaluate → [replan | deliver]
+        classify → [chat_respond | ask_user | plan → execute → evaluate → [replan | deliver]]
         │
         └── Agent Pool → MCP Tools
   │
@@ -76,7 +75,7 @@ User
 
 - FastAPI endpoint: `POST /orchestrate`
 - Contains the LangGraph Supervisor graph
-- Graph nodes: classify, chat_respond, plan, execute, evaluate, deliver
+- Graph nodes: classify, chat_respond, ask_user (human-in-the-loop), plan, execute, evaluate, deliver
 - Goal-oriented: replans if evaluation determines goal not achieved (max 5 iterations)
 - Plans are DAGs of PlanSteps with agent types and dependencies
 
@@ -94,19 +93,13 @@ User
 - Tools: web_search, scrape_url, code_executor, file_io, media_processor
 - `TOOL_REGISTRY` maps agent types to allowed tool subsets
 
-## 5. Task Queue (`platform_queue/`)
-
-- Redis Streams for async task queuing
-- Consumer groups for reliable delivery
-- Pub/Sub for progress updates
-
-## 6. Delivery Service (`services/delivery/`)
+## 5. Delivery Service (`services/delivery/`)
 
 - Converts text results to PDF (fpdf2), Excel (openpyxl), Audio (OpenAI TTS)
 - Returns base64-encoded content for binary formats
 - Gateway decodes and returns as file download
 
-## 7. Database (`database/`)
+## 6. Database (`database/`)
 
 - PostgreSQL + SQLAlchemy + Alembic
 - Tables: sessions, message_history, workflows, workflow_steps
@@ -127,7 +120,7 @@ User
 # Project Structure
 
 ```
-main.py                              # CLI: gateway, orchestrator, worker, migrate
+main.py                              # CLI: gateway, orchestrator, migrate
 services/
   gateway/                           # FastAPI API (port 8000)
     api/routes.py                    #   /message, /message/upload
@@ -148,12 +141,10 @@ services/
   delivery/                          # Output formatting
     delivery_service.py              #   PDF, Excel, Audio, JSON
     formatters/audio.py              #   TTS conversion
-  workers/                           # Background worker
 shared/
   models/                            # SQLAlchemy ORM + Pydantic schemas
   mcp/                               # MCP tool server + client
     tools/                           #   web_search, scrape_url, code_executor, file_io, media_processor
-platform_queue/                      # Redis Streams task queue
 database/                            # SQLAlchemy connection + Alembic
 ```
 
@@ -167,6 +158,5 @@ database/                            # SQLAlchemy connection + Alembic
 - LangGraph for supervisor workflow
 - LangChain for agent creation
 - MCP for tool interfaces
-- Redis for queues and pub/sub
 - PostgreSQL for persistence
 - Docker Compose for service runtime

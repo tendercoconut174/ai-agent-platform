@@ -70,8 +70,29 @@ PLAN_SYSTEM = (
     "plan only the parts that ARE possible (e.g. research + analysis) and include a note in the last step "
     "that the unsupported parts (email, scheduling) are not yet available.\n"
     "- Each step should complete in under 60 seconds. Break large tasks into smaller pieces.\n"
-    "- Do NOT use 'chat' for tasks that need tools or research."
+    "- Do NOT use 'chat' for tasks that need tools or research.\n"
+    "- When conversation context is provided, the goal may be a follow-up (e.g. 'can you write one with python'). "
+    "Use the context to resolve references like 'one', 'it', 'that' — and make step messages explicit "
+    "(e.g. 'Write a Python calculator app' not 'Write a Python script based on the user request')."
 )
+
+
+def _format_conversation_for_plan(history: list[dict[str, str]], max_chars: int = 1500) -> str:
+    """Format conversation history for planner context. Truncates long assistant responses."""
+    if not history:
+        return ""
+    lines = []
+    total = 0
+    for msg in history[-6:]:  # Last 6 messages (3 exchanges)
+        role = msg.get("role", "user")
+        content = (msg.get("content") or "")[:800]
+        if total + len(content) > max_chars:
+            content = content[: max_chars - total - 20] + "..."
+        lines.append(f"{role.upper()}: {content}")
+        total += len(content)
+        if total >= max_chars:
+            break
+    return "\n".join(lines)
 
 
 async def _plan_with_llm(
@@ -79,6 +100,7 @@ async def _plan_with_llm(
     output_format: str = "json",
     iteration: int = 0,
     previous_feedback: str = "",
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> ExecutionPlan:
     from shared.llm import get_llm
 
@@ -87,6 +109,13 @@ async def _plan_with_llm(
 
     format_hint = FORMAT_HINTS.get(output_format, "")
     user_msg = goal
+    if conversation_history:
+        ctx = _format_conversation_for_plan(conversation_history)
+        if ctx:
+            user_msg = (
+                f"=== CONVERSATION CONTEXT (resolve 'one', 'it', 'that' from this) ===\n{ctx}\n"
+                f"=== CURRENT GOAL ===\n{goal}"
+            )
     if format_hint:
         user_msg += f"\n\nOutput format instruction: {format_hint}"
 
@@ -144,9 +173,12 @@ async def plan(state: WorkflowState) -> WorkflowState:
     from shared.llm import is_llm_available
 
     previous_feedback = _build_previous_feedback(state) if iteration > 0 else ""
+    conversation_history = state.get("conversation_history") or []
 
     if is_llm_available("planner"):
-        execution_plan = await _plan_with_llm(goal, output_format, iteration, previous_feedback)
+        execution_plan = await _plan_with_llm(
+            goal, output_format, iteration, previous_feedback, conversation_history
+        )
     else:
         execution_plan = ExecutionPlan(
             steps=[PlanStep(node_id="step_1", agent_type="research", message=goal)],

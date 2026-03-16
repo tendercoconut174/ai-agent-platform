@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import warnings
 from collections.abc import Awaitable, Callable
 
@@ -9,10 +10,11 @@ warnings.filterwarnings("ignore", message=".*Pydantic V1.*Python 3.14.*", catego
 
 from shared.llm import get_llm, is_llm_available
 from shared.mcp.server import get_tools_for_agent
+from shared.retry import retry_async
 
 logger = logging.getLogger(__name__)
 
-AGENT_TIMEOUT_SECONDS = 90
+AGENT_TIMEOUT_SECONDS = int(os.getenv("AGENT_TIMEOUT_SECONDS", "180"))
 
 
 def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], Awaitable[str]]:
@@ -27,8 +29,9 @@ def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], A
     """
     tools = get_tools_for_agent(agent_type)
 
+    @retry_async(max_attempts=2, min_wait=1.0, max_wait=10.0, exceptions=(ConnectionError, OSError))
     async def _invoke_agent(agent, message: str) -> dict:
-        """Invoke agent with a timeout guard."""
+        """Invoke agent with timeout guard and retry."""
         return await asyncio.wait_for(
             agent.ainvoke({"messages": [{"role": "user", "content": message}]}),
             timeout=AGENT_TIMEOUT_SECONDS,

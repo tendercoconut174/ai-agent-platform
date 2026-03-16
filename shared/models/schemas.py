@@ -21,6 +21,14 @@ class MessageRequest(BaseModel):
         default=None,
         description="When resuming after clarification: the workflow_id from the needs_clarification response",
     )
+    require_code_approval: bool = Field(
+        default=False,
+        description="When true, pause for user approval before running Python code",
+    )
+    code_approval_id: Optional[str] = Field(
+        default=None,
+        description="When resuming after code approval: the approval_id from the needs_code_approval response",
+    )
 
 
 class WorkflowResponse(BaseModel):
@@ -98,6 +106,11 @@ class OrchestratorRequest(BaseModel):
     workflow_id: Optional[str] = Field(
         default=None,
         description="When resuming: workflow_id from needs_clarification response",
+    )
+    require_code_approval: bool = Field(default=False, description="Pause for user approval before running code")
+    code_approval_id: Optional[str] = Field(
+        default=None,
+        description="When resuming after code approval: approval_id from needs_code_approval response",
     )
 
 

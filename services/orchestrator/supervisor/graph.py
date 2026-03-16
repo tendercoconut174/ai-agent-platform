@@ -65,6 +65,8 @@ def _route_after_classify(state: WorkflowState) -> str:
 
 def _route_after_evaluate(state: WorkflowState) -> str:
     """Route based on evaluation result."""
+    if state.get("needs_code_approval", False):
+        return "deliver"
     if state.get("goal_achieved", False):
         return "deliver"
     return "plan"  # Replan if goal not achieved
@@ -134,6 +136,7 @@ async def run_workflow(
     workflow_id: str | None = None,
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    require_code_approval: bool = False,
 ) -> WorkflowState:
     """Run the full supervisor workflow asynchronously.
 
@@ -178,6 +181,7 @@ async def run_workflow(
         "error": None,
         "needs_clarification": False,
         "clarification_question": None,
+        "require_code_approval": require_code_approval,
     }
 
     result = await graph.ainvoke(initial_state)
@@ -194,6 +198,7 @@ async def run_workflow_stream(
     workflow_id: str | None = None,
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    require_code_approval: bool = False,
 ) -> AsyncGenerator[dict, None]:
     """Run workflow and stream progress events (node transitions + per-step updates)."""
     t0 = time.perf_counter()
@@ -225,6 +230,7 @@ async def run_workflow_stream(
         "error": None,
         "needs_clarification": False,
         "clarification_question": None,
+        "require_code_approval": require_code_approval,
         "progress_queue": progress_queue,
     }
 
@@ -298,7 +304,20 @@ async def run_workflow_stream(
         # Run delivery for formatted output (pdf, xl, audio)
         output_format = initial_state.get("output_format", "json")
         result_text = final_state.get("final_result", "")
-        if not final_state.get("needs_clarification") and result_text:
+        needs_code_approval = final_state.get("needs_code_approval", False)
+
+        if needs_code_approval:
+            delivery = {
+                "result": result_text,
+                "workflow_id": wf_id,
+                "output_format": output_format,
+                "needs_code_approval": True,
+                "code_approval_id": final_state.get("pending_code_approval_id"),
+                "code": final_state.get("code_to_approve"),
+                "original_goal": final_state.get("goal", ""),
+                "step_id": final_state.get("pending_step_id", "step_1"),
+            }
+        elif not final_state.get("needs_clarification") and result_text:
             from services.delivery.delivery_service import deliver
             delivery = await asyncio.to_thread(
                 deliver,
@@ -320,6 +339,9 @@ async def run_workflow_stream(
             "workflow_id": wf_id,
             "intent": final_state.get("intent"),
             "needs_clarification": final_state.get("needs_clarification", False),
+            "needs_code_approval": needs_code_approval,
+            "code_approval_id": final_state.get("pending_code_approval_id"),
+            "code_to_approve": final_state.get("code_to_approve"),
             "clarification_question": final_state.get("clarification_question"),
             "final_result": final_state.get("final_result"),
             "step_results": [

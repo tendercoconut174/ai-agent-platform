@@ -69,5 +69,11 @@ class WorkflowState(TypedDict, total=False):
     needs_clarification: bool
     clarification_question: Optional[str]
 
+    # Code approval (human-in-the-loop for execute_python)
+    require_code_approval: bool
+    needs_code_approval: bool
+    pending_code_approval_id: Optional[str]
+    code_to_approve: Optional[str]
+
     # Streaming (internal, not serialized)
     progress_queue: Any  # asyncio.Queue for streaming step updates

@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from langchain_core.tools import StructuredTool, tool
 
+from shared.code_approval_context import CodeApprovalRequired, get_code_approval_context
 from shared.mcp.tools.code_executor import execute_python
 from shared.mcp.tools.email_sender import send_email
 from shared.mcp.tools.file_io import list_files, read_file, write_file
@@ -44,6 +45,14 @@ def tool_scrape_url(url: str, max_length: int = 5000) -> str:
 def tool_execute_python(code: str) -> str:
     """Execute Python code and return the output. Use for calculations, data processing, analysis.
     Only safe standard library modules are available (math, json, re, datetime, collections, statistics, csv)."""
+    ctx = get_code_approval_context()
+    if ctx is not None:
+        raise CodeApprovalRequired(
+            code=code,
+            workflow_id=ctx.workflow_id,
+            step_id=ctx.step_id,
+            session_id=ctx.session_id,
+        )
     result = execute_python(code=code)
     output = ""
     if result["stdout"]:

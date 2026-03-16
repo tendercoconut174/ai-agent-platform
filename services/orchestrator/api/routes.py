@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from services.delivery.delivery_service import deliver
 from services.orchestrator.supervisor.graph import run_workflow, run_workflow_stream
+from shared.metrics import WORKFLOW_COUNT
 from shared.models.schemas import OrchestratorRequest
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ async def orchestrate_endpoint(payload: OrchestratorRequest) -> dict[str, Any]:
             session_id=payload.session_id,
             callback_url=payload.callback_url,
             conversation_history=payload.conversation_history,
+            require_code_approval=payload.require_code_approval,
         )
         workflow_elapsed = time.perf_counter() - t0
         workflow_id = state.get("workflow_id")
@@ -36,6 +38,7 @@ async def orchestrate_endpoint(payload: OrchestratorRequest) -> dict[str, Any]:
         # Human-in-the-loop: return clarification request without delivery formatting
         if state.get("needs_clarification"):
             question = state.get("clarification_question", "")
+            WORKFLOW_COUNT.labels(intent=state.get("intent", "?"), outcome="clarification").inc()
             logger.info("[orchestrator] Workflow %s needs clarification | question=%s | %.2fs",
                        workflow_id, question[:80], workflow_elapsed)
             return {
@@ -45,6 +48,22 @@ async def orchestrate_endpoint(payload: OrchestratorRequest) -> dict[str, Any]:
                 "session_id": payload.session_id,
                 "needs_clarification": True,
                 "question": question,
+            }
+
+        # Human-in-the-loop: return code approval request
+        if state.get("needs_code_approval"):
+            WORKFLOW_COUNT.labels(intent=state.get("intent", "?"), outcome="code_approval").inc()
+            logger.info("[orchestrator] Workflow %s needs code approval | %.2fs", workflow_id, workflow_elapsed)
+            return {
+                "result": state.get("final_result", ""),
+                "workflow_id": workflow_id,
+                "output_format": payload.output_format,
+                "session_id": payload.session_id,
+                "needs_code_approval": True,
+                "code_approval_id": state.get("pending_code_approval_id"),
+                "code": state.get("code_to_approve", ""),
+                "original_goal": state.get("goal", payload.message),
+                "step_id": state.get("pending_step_id", "step_1"),
             }
 
         result_text = state.get("final_result", "")
@@ -65,10 +84,12 @@ async def orchestrate_endpoint(payload: OrchestratorRequest) -> dict[str, Any]:
             {"node_id": r.node_id, "agent_type": r.agent_type, "result": (r.result or "")[:500], "error": r.error, "success": r.success}
             for r in step_results
         ]
+        WORKFLOW_COUNT.labels(intent=state.get("intent", "?"), outcome="success").inc()
         logger.info("[orchestrator] Delivery formatted in %.2fs | format=%s | total=%.2fs",
                      time.perf_counter() - t1, payload.output_format, time.perf_counter() - t0)
         return response
     except Exception as e:
+        WORKFLOW_COUNT.labels(intent="?", outcome="error").inc()
         logger.exception("[orchestrator] Failed after %.2fs: %s", time.perf_counter() - t0, e)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -84,6 +105,7 @@ async def orchestrate_stream_endpoint(payload: OrchestratorRequest) -> EventSour
                 session_id=payload.session_id,
                 callback_url=payload.callback_url,
                 conversation_history=payload.conversation_history,
+                require_code_approval=payload.require_code_approval,
             ):
                 yield {"data": json.dumps(event)}
         except Exception as e:

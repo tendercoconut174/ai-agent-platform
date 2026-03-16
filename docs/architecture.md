@@ -72,7 +72,7 @@ The system is split into two FastAPI services (Gateway and Orchestrator), a shar
 
 The user-facing API layer. Responsibilities:
 
-- **API endpoints**: `POST /message` (JSON) and `POST /message/upload` (multipart)
+- **API endpoints**: `POST /message` (JSON), `POST /message/stream` (SSE), and `POST /message/upload` (multipart)
 - **Input processing**: Converts multi-modal input (audio, images, files) into text using Whisper, GPT-4V, and text extraction
 - **Format inference**: Detects output format hints in messages ("give me pdf", "as excel") and strips them before forwarding
 - **Session management**: Creates/retrieves sessions and stores message history in PostgreSQL (with in-memory fallback)
@@ -129,7 +129,7 @@ class WorkflowState(TypedDict, total=False):
 
 ### Agent Pool (`services/agents/`)
 
-Six specialized agents, all built with the same factory (`create_react_agent`):
+Seven specialized agents, all built with the same factory (`create_react_agent`):
 
 | Agent | Tools | Purpose |
 |-------|-------|---------|
@@ -139,6 +139,7 @@ Six specialized agents, all built with the same factory (`create_react_agent`):
 | **code** | execute_python, read_file, write_file, list_files | Calculations, data processing |
 | **monitor** | web_search, scrape_url | Long-running observation tasks |
 | **chat** | (none) | Casual conversation |
+| **plan_execute** | web_search, execute_python, read_file | Complex tasks; planner creates steps, executor runs each |
 
 Each agent is a LangChain ReAct agent (`langchain.agents.create_agent`) with access to a subset of MCP tools determined by the agent type.
 
@@ -177,6 +178,14 @@ When the classifier detects a vague or ambiguous request (`needs_clarification` 
 1. User: `{"message": "research companies"}` → Response: `{"needs_clarification": true, "question": "Which industry?", "workflow_id": "..."}`
 2. User: `{"message": "tech sector", "workflow_id": "..."}` → Gateway merges goal, runs workflow, returns result
 
+### Human-in-the-Loop (Code Approval)
+
+When `require_code_approval` is true and a code/analysis/generator agent proposes Python code, the `execute_python` tool raises `CodeApprovalRequired` instead of running the code. The execute node saves the pending approval in `pending_code_approvals` (PostgreSQL or in-memory) and returns `needs_code_approval: true` with `code_approval_id` and `code`. The user reviews the code and resumes by sending a follow-up with `code_approval_id`. The gateway loads the pending approval, runs the code via `execute_python`, and forwards the output to the orchestrator. The agent receives the output and continues (e.g. analyzes and delivers the final answer).
+
+**Flow:**
+1. User: `{"message": "calculate fibonacci(10)", "require_code_approval": true}` → Agent proposes code → Response: `{"needs_code_approval": true, "code_approval_id": "...", "code": "def fib(n): ..."}`
+2. User: `{"message": "approved", "code_approval_id": "..."}` → Gateway runs code, forwards output to orchestrator → Agent analyzes output → Returns final result
+
 ### Session Manager (`services/gateway/session_manager.py`)
 
 Provides conversation continuity:
@@ -189,7 +198,7 @@ Provides conversation continuity:
 
 - **Engine**: SQLAlchemy with `psycopg2` (sync) driver
 - **Migrations**: Alembic with autogenerate support
-- **Tables**: `sessions`, `message_history`, `workflows`, `workflow_steps`, `pending_clarifications`
+- **Tables**: `sessions`, `message_history`, `workflows`, `workflow_steps`, `pending_clarifications`, `pending_code_approvals`
 
 ## Data Flow: Complex Task Example
 
@@ -220,6 +229,20 @@ Provides conversation continuity:
 9. **Gateway** forwards merged goal to Orchestrator (normal flow)
 10. **Supervisor** runs classify → plan → execute → evaluate → deliver
 11. **Gateway** returns final result
+
+## Data Flow: Code Approval Example
+
+1. User sends: `{"message": "calculate 2+2 in Python", "require_code_approval": true}`
+2. **Gateway** creates session, forwards to Orchestrator with `require_code_approval: true`
+3. **Supervisor** runs classify → plan → execute
+4. **Execute node**: Code agent proposes `print(2+2)`; `execute_python` tool raises `CodeApprovalRequired` (approval mode)
+5. **Execute node**: Saves pending approval (code, original_goal, output_format) via `save_pending_code_approval`, returns `needs_code_approval: true`, `code_approval_id`, `code`
+6. **Gateway**: Returns response with `needs_code_approval`, `code_approval_id`, `code`
+7. User reviews code, sends: `{"message": "approved", "code_approval_id": "..."}`
+8. **Gateway**: Loads pending approval, runs `execute_python(pending.code)`, gets output `4`
+9. **Gateway**: Forwards merged message `[Code approved and executed]\n\nOutput:\n4\n\nOriginal request: ...` to Orchestrator
+10. **Supervisor**: Runs fresh workflow; agent receives output, analyzes, delivers final answer
+11. **Gateway**: Returns result to user
 
 ## Data Flow: Casual Chat Example
 

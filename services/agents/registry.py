@@ -8,6 +8,7 @@ from services.agents import (
     code_agent,
     generator_agent,
     monitor_agent,
+    plan_execute_agent,
     research_agent,
 )
 
@@ -20,6 +21,7 @@ AGENT_REGISTRY: dict[str, AgentRunner] = {
     "code": code_agent.run,
     "monitor": monitor_agent.run,
     "chat": chat_agent.run,
+    "plan_execute": plan_execute_agent.run,
 }
 
 

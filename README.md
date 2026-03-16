@@ -45,6 +45,7 @@ User
 - **MCP tools** -- agents use structured, discoverable tools rather than calling APIs directly
 - **Format-aware planning** -- the planner injects output format instructions so agents produce data suitable for the requested format
 - **Human-in-the-loop** -- when a request is vague or ambiguous, the supervisor asks for clarification; user can resume with `workflow_id`
+- **Code approval** -- when enabled (`require_code_approval: true`), agents pause for user approval before running Python code; user reviews and approves via UI or API
 
 ## Prerequisites
 
@@ -76,9 +77,14 @@ PostgreSQL is optional. Without it, sessions are stored in-memory (lost on resta
 A web UI for testing the API is available at `http://localhost:8000/ui/` (or `http://localhost:8000/` which redirects there). It provides:
 
 - **Chat interface** — Send messages and view responses
+- **Streaming** — Live workflow steps and results as they run (toggle via "Stream" checkbox)
 - **Steps panel** — See workflow steps (classify, plan, execute) as they complete
 - **Session management** — Session ID persisted in localStorage; "New session" to reset
 - **Workflow ID** — Displayed for clarification resume flow
+- **Code approval** — When enabled, shows a banner with proposed code; user clicks "Approve & run" to execute
+- **Clarification banner** — Separate area for replying when the system asks for clarification
+- **Clear chat** — Reset messages and steps
+- **Stop** — Cancel in-flight requests
 - **Output format** — JSON, PDF, Excel, Audio selector
 - **API URL** — Configurable (default `http://localhost:8000`)
 
@@ -140,6 +146,8 @@ curl -X POST http://localhost:8000/message/upload \
 | `session_id` | auto-generated | Session ID for conversation continuity |
 | `callback_url` | null | Webhook URL for async result delivery |
 | `workflow_id` | null | When resuming after clarification: the `workflow_id` from the `needs_clarification` response |
+| `require_code_approval` | `false` | When true, pause for user approval before running Python code |
+| `code_approval_id` | null | When resuming after code approval: the `code_approval_id` from the `needs_code_approval` response |
 
 ### Response Format
 
@@ -159,7 +167,13 @@ curl -X POST http://localhost:8000/message/upload \
 
 When the request is vague (`needs_clarification: true`), the response includes a `question` to ask the user. Resume by sending a follow-up with `workflow_id` and your clarification as `message`.
 
+When code approval is enabled and an agent proposes Python code (`needs_code_approval: true`), the response includes `code_approval_id` and `code`. Resume by sending a follow-up with `code_approval_id`; the gateway runs the approved code and forwards the output to the orchestrator.
+
 For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file download with appropriate `Content-Type` and `Content-Disposition` headers.
+
+### POST /message/stream -- Server-Sent Events
+
+Stream workflow progress in real time. Same request body as `POST /message`. Returns SSE events with step updates and final delivery. Use when you want live steps and streaming results.
 
 ## Environment Variables
 
@@ -176,6 +190,7 @@ For file formats (`pdf`, `xl`, `audio`), the gateway returns a binary file downl
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (for local models) |
 | `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL connection URL |
 | `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway) |
+| `AGENT_TIMEOUT_SECONDS` | `180` | Max seconds per agent step (increase for complex analysis) |
 | `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace directory for file_io tool |
 | `SMTP_HOST` | `smtp.gmail.com` | SMTP server for email sending |
 | `SMTP_PORT` | `587` | SMTP port (587 for TLS) |

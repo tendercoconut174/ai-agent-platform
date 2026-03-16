@@ -30,7 +30,9 @@ Synchronous message endpoint. Sends the user message to the orchestrator, waits 
   "session_id": null,
   "callback_url": null,
   "metadata": null,
-  "workflow_id": null
+  "workflow_id": null,
+  "require_code_approval": false,
+  "code_approval_id": null
 }
 ```
 
@@ -43,6 +45,8 @@ Synchronous message endpoint. Sends the user message to the orchestrator, waits 
 | `callback_url` | string | no | null | Webhook URL for async result delivery |
 | `metadata` | object | no | null | Extra context |
 | `workflow_id` | string | no | null | When resuming after clarification: the `workflow_id` from the `needs_clarification` response |
+| `require_code_approval` | boolean | no | false | When true, pause for user approval before running Python code |
+| `code_approval_id` | string | no | null | When resuming after code approval: the `code_approval_id` from the `needs_code_approval` response |
 
 **Output Format Auto-Detection:**
 
@@ -93,6 +97,32 @@ To resume, send a follow-up with the same `session_id` and the **`workflow_id` f
 }
 ```
 
+**Response (needs code approval – human-in-the-loop):**
+
+When `require_code_approval` is true and an agent proposes Python code, the response includes:
+
+```json
+{
+  "result": "I've prepared code to calculate the result. Please approve and run it.",
+  "workflow_id": "4f076e33-f859-437a-ab4a-038d6a05873e",
+  "output_format": "json",
+  "session_id": "bd87e8c8-d6e7-4d28-87e1-da4685ef5b1b",
+  "needs_code_approval": true,
+  "code_approval_id": "abc123-def456-...",
+  "code": "print(2 + 2)"
+}
+```
+
+To resume, send a follow-up with the same `session_id` and **`code_approval_id`**. The gateway runs the approved code and forwards the output to the orchestrator. You can send any message (e.g. "approved" or "run"):
+
+```json
+{
+  "message": "approved",
+  "code_approval_id": "abc123-def456-...",
+  "session_id": "bd87e8c8-d6e7-4d28-87e1-da4685ef5b1b"
+}
+```
+
 **Response (file format):**
 
 When `output_format` is `pdf`, `xl`, or `audio` and the conversion succeeds, the response is a binary file download:
@@ -111,6 +141,24 @@ When `output_format` is `pdf`, `xl`, or `audio` and the conversion succeeds, the
 ```
 
 Status code: `502 Bad Gateway`
+
+---
+
+### POST /message/stream
+
+Stream workflow progress via Server-Sent Events. Same request body as `POST /message`. Returns SSE events with live step updates and final delivery. Use when you want real-time progress (e.g. in a UI with a steps panel).
+
+**Request Body:** Same as `POST /message` (including `require_code_approval`, `code_approval_id`).
+
+**Response:** `text/event-stream` with JSON events:
+
+| Event `type` | Description |
+|--------------|-------------|
+| `step` | Workflow step update (node_id, agent_type, result, etc.) |
+| `done` | Final delivery (result, needs_clarification, needs_code_approval, etc.) |
+| `error` | Error occurred |
+
+When `done` includes `needs_code_approval: true`, the event contains `code_approval_id` and `code` for the user to approve.
 
 ---
 
@@ -309,6 +357,24 @@ SESSION=$(echo $RESP | jq -r '.session_id')
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d "{\"message\": \"tech sector\", \"workflow_id\": \"$WF_ID\", \"session_id\": \"$SESSION\"}"
+```
+
+### Human-in-the-Loop (Code Approval)
+
+```bash
+# Step 1: Request with code approval enabled – agent proposes code
+RESP=$(curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "calculate 2+2 in Python", "require_code_approval": true}')
+echo $RESP | jq .
+# {"result": "...", "needs_code_approval": true, "code_approval_id": "uuid", "code": "print(2+2)", ...}
+
+# Step 2: Resume with approval – gateway runs code and forwards output
+APPROVAL_ID=$(echo $RESP | jq -r '.code_approval_id')
+SESSION=$(echo $RESP | jq -r '.session_id')
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"approved\", \"code_approval_id\": \"$APPROVAL_ID\", \"session_id\": \"$SESSION\"}"
 ```
 
 ### Explicit Format

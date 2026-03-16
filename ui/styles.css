@@ -164,6 +164,31 @@ body {
   display: none;
 }
 
+.code-approval-banner {
+  padding: 12px 20px;
+  background: rgba(99, 102, 241, 0.12);
+  border-top: 1px solid var(--accent);
+}
+
+.code-approval-banner.hidden {
+  display: none;
+}
+
+.code-approval-banner pre {
+  background: var(--bg-input);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+
+.code-approval-actions {
+  margin-top: 12px;
+}
+
 .clarification-banner code {
   display: block;
   margin-top: 8px;
@@ -349,6 +374,14 @@ body {
 .step-item .step-agent {
   font-size: 11px;
   color: var(--accent);
+}
+
+.step-item .step-badge {
+  font-size: 10px;
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .step-item .step-result {

@@ -47,6 +47,10 @@ async def _evaluate_with_llm(goal: str, result: str) -> tuple[bool, str]:
 async def evaluate(state: WorkflowState) -> WorkflowState:
     """Evaluate if the goal is achieved via structured LLM output."""
     t0 = time.perf_counter()
+    if state.get("needs_code_approval", False):
+        logger.info("[evaluate] DONE  | needs_code_approval, passing to deliver | %.2fs", time.perf_counter() - t0)
+        return state
+
     goal = state.get("goal", "")
     final_result = state.get("final_result", "")
     iteration = state.get("iteration_count", 0) + 1

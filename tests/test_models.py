@@ -38,6 +38,19 @@ class TestMessageRequest:
         assert req.mode == "chat"
         assert req.session_id == "sess-1"
 
+    def test_require_code_approval_defaults_false(self) -> None:
+        req = MessageRequest(message="hello")
+        assert req.require_code_approval is False
+
+    def test_require_code_approval_and_code_approval_id(self) -> None:
+        req = MessageRequest(
+            message="approved",
+            require_code_approval=True,
+            code_approval_id="approval-abc-123",
+        )
+        assert req.require_code_approval is True
+        assert req.code_approval_id == "approval-abc-123"
+
 
 class TestTaskPayload:
     """Tests for TaskPayload model."""
@@ -104,6 +117,17 @@ class TestOrchestratorRequest:
         req = OrchestratorRequest(message="do something")
         assert req.mode == "auto"
         assert req.output_format == "json"
+        assert req.require_code_approval is False
+        assert req.code_approval_id is None
+
+    def test_require_code_approval_and_code_approval_id(self) -> None:
+        req = OrchestratorRequest(
+            message="resume",
+            require_code_approval=True,
+            code_approval_id="approval-xyz",
+        )
+        assert req.require_code_approval is True
+        assert req.code_approval_id == "approval-xyz"
 
 
 class TestWorkflowResponse:

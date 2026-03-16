@@ -26,6 +26,11 @@
           </label>
         </span>
         <span class="meta-item">
+          <label>
+            <input type="checkbox" id="require-code-approval" title="When checked: pause and ask before running code. When unchecked: code runs automatically (Cursor-style)."> Require approval
+          </label>
+        </span>
+        <span class="meta-item">
           <label>Format:</label>
           <select id="output-format">
             <option value="json">JSON</option>
@@ -53,6 +58,13 @@
           <div class="clarification-input-area">
             <textarea id="clarification-input" placeholder="Type your clarification here..." rows="2"></textarea>
             <button id="clarification-send-btn" class="btn-primary">Send clarification</button>
+          </div>
+        </div>
+        <div id="code-approval-banner" class="code-approval-banner hidden">
+          <p><strong>Approval mode:</strong> Code is paused. Review below and click "Approve & run" to execute.</p>
+          <pre id="code-approval-code"></pre>
+          <div class="code-approval-actions">
+            <button id="code-approval-btn" class="btn-primary">Approve & run</button>
           </div>
         </div>
         <div class="input-area">

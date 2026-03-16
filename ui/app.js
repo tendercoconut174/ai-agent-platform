@@ -69,14 +69,16 @@ function renderSteps(stepResults) {
     const running = step.running === true;
     const statusClass = running ? "running" : (step.success ? "success" : "error");
     div.className = `step-item ${statusClass}`;
-    const resultText = (step.result || step.error || "").slice(0, 300);
+    const resultText = (step.result || step.error || "").slice(0, 500);
+    const isCodeAgent = ["code", "analysis", "generator"].includes(step.agent_type);
     const resultHtml = running && !resultText
       ? '<span class="step-running">Running…</span>'
-      : escapeHtml(resultText) + ((step.result || "").length > 300 ? "…" : "");
+      : escapeHtml(resultText) + ((step.result || "").length > 500 ? "…" : "");
     div.innerHTML = `
       <div class="step-header">
         <span class="step-id">${step.node_id}</span>
         <span class="step-agent">${step.agent_type}</span>
+        ${isCodeAgent ? '<span class="step-badge" title="Code ran automatically">✓ ran</span>' : ""}
       </div>
       <div class="step-result">${resultHtml}</div>
     `;
@@ -117,10 +119,26 @@ function hideStopButton() {
   document.getElementById("stop-btn").classList.add("hidden");
 }
 
+let pendingCodeApprovalId = null;
+
+function showCodeApprovalBanner(code, approvalId) {
+  pendingCodeApprovalId = approvalId;
+  document.getElementById("code-approval-code").textContent = code;
+  document.getElementById("code-approval-banner").classList.remove("hidden");
+  document.querySelector(".input-area").classList.add("clarification-active");
+}
+
+function hideCodeApprovalBanner() {
+  pendingCodeApprovalId = null;
+  document.getElementById("code-approval-banner").classList.add("hidden");
+  document.querySelector(".input-area").classList.remove("clarification-active");
+}
+
 function clearChat() {
   document.getElementById("chat-messages").innerHTML = "";
   renderSteps([]);
   hideClarificationBanner();
+  hideCodeApprovalBanner();
   setStatus("");
 }
 
@@ -129,8 +147,10 @@ async function sendMessage(sourceInput = "main") {
   const clarificationInput = document.getElementById("clarification-input");
   const input = sourceInput === "clarification" ? clarificationInput : mainInput;
   const sendBtn = document.getElementById("send-btn");
-  const message = input.value.trim();
-  if (!message) return;
+  let message = input.value.trim();
+  if (sourceInput === "code_approval") {
+    message = "approved";
+  } else if (!message) return;
 
   const apiUrl = getApiUrl();
   const sessionId = getSessionId();
@@ -142,18 +162,25 @@ async function sendMessage(sourceInput = "main") {
   sendBtn.disabled = true;
   document.getElementById("clarification-send-btn").disabled = true;
   input.value = "";
+  const approvalIdToSend = sourceInput === "code_approval" ? pendingCodeApprovalId : null;
   if (sourceInput === "clarification") hideClarificationBanner();
+  if (sourceInput === "code_approval") hideCodeApprovalBanner();
   addMessage("user", message);
   setStatus("Sending...");
   renderSteps([]);
 
   abortController = new AbortController();
+  const requireCodeApproval = document.getElementById("require-code-approval").checked;
   const payload = {
     message,
     output_format: outputFormat,
     session_id: sessionId || null,
     workflow_id: wfId || null,
+    require_code_approval: requireCodeApproval,
   };
+  if (approvalIdToSend) {
+    payload.code_approval_id = approvalIdToSend;
+  }
 
   try {
     showStopButton();
@@ -249,7 +276,11 @@ async function sendMessageStream(apiUrl, payload, sessionId, outputFormat, sendB
             if (event.step_results) renderSteps(event.step_results);
 
             const delivery = event.delivery || {};
-            if (delivery.needs_clarification) {
+            if (delivery.needs_code_approval) {
+              showCodeApprovalBanner(delivery.code || "", delivery.code_approval_id);
+              resultEl.textContent = delivery.result || "Code execution requires your approval.";
+              setStatus("Code approval needed");
+            } else if (delivery.needs_clarification) {
               showClarificationBanner(delivery.question || delivery.result);
               resultEl.textContent = delivery.question || delivery.result;
               setStatus("Clarification needed");
@@ -305,7 +336,11 @@ async function sendMessageSync(apiUrl, payload, sessionId, outputFormat, sendBtn
   setWorkflowId(data.workflow_id || null);
   setIntent(data.intent || null);
 
-  if (data.needs_clarification) {
+  if (data.needs_code_approval) {
+    showCodeApprovalBanner(data.code || "", data.code_approval_id);
+    addMessage("assistant", data.result || "Code execution requires your approval.");
+    setStatus("Code approval needed");
+  } else if (data.needs_clarification) {
     showClarificationBanner(data.question || data.result);
     addMessage("assistant", data.question || data.result);
     setStatus("Clarification needed");
@@ -378,6 +413,7 @@ function init() {
   });
 
   document.getElementById("clarification-send-btn").addEventListener("click", () => sendMessage("clarification"));
+  document.getElementById("code-approval-btn").addEventListener("click", () => sendMessage("code_approval"));
   document.getElementById("clarification-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

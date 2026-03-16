@@ -24,7 +24,9 @@ dependencies = [
     "python-multipart>=0.0.20",
     "redis>=7.3.0",
     "sqlalchemy[asyncio]>=2.0.48",
+    "prometheus-client>=0.21.0",
     "sse-starlette>=2.0.0",
+    "tenacity>=9.0.0",
     "uvicorn>=0.41.0",
 ]
 

@@ -17,12 +17,13 @@ The registry (`services/agents/registry.py`) maps agent type strings to runner f
 
 ```python
 AGENT_REGISTRY = {
-    "research":  research_agent.run,
-    "analysis":  analysis_agent.run,
-    "generator": generator_agent.run,
-    "code":      code_agent.run,
-    "monitor":   monitor_agent.run,
-    "chat":      chat_agent.run,
+    "research":      research_agent.run,
+    "analysis":      analysis_agent.run,
+    "generator":     generator_agent.run,
+    "code":          code_agent.run,
+    "monitor":       monitor_agent.run,
+    "chat":          chat_agent.run,
+    "plan_execute":  plan_execute_agent.run,
 }
 ```
 
@@ -103,6 +104,17 @@ System prompt directives:
 - Handle greetings, small talk, general questions
 - No tool access needed
 
+### Plan-Execute Agent
+
+**File:** `services/agents/plan_execute_agent.py`
+**Tools:** Same as analysis agent (web_search, execute_python, read_file)
+**Purpose:** Complex tasks with explicit planning; planner creates steps, executor runs each
+
+System prompt directives:
+- First plan the full step list
+- Execute each step in order
+- Better for long-horizon tasks with fewer mid-flight decisions
+
 ---
 
 ## Tool System (MCP)
@@ -156,6 +168,7 @@ Executes Python code in a sandboxed environment.
 - **Output:** `{stdout, stderr, error, return_value}` dict
 - **Safety:** Only safe stdlib modules are allowed: `math`, `json`, `re`, `datetime`, `collections`, `statistics`, `csv`, `itertools`, `functools`, `string`, `textwrap`, `random`
 - **Timeout:** 30 seconds
+- **Code approval:** When `require_code_approval` is true and the tool is invoked from a code/analysis/generator agent, it raises `CodeApprovalRequired` instead of running. The execute node saves the pending approval; the user approves via UI or API; the gateway runs the code and forwards output to the orchestrator.
 - **LangChain wrapper:** `tool_execute_python` returns stdout/stderr/error as text
 
 #### file_io (`shared/mcp/tools/file_io.py`)

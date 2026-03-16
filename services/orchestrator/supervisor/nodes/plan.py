@@ -22,14 +22,15 @@ class PlanStepSchema(BaseModel):
     """Schema for a single step the LLM returns."""
 
     node_id: str = Field(description="Unique step ID like step_1, step_2")
-    agent_type: Literal["research", "analysis", "generator", "code", "monitor", "chat"] = Field(
+    agent_type: Literal["research", "analysis", "generator", "code", "monitor", "chat", "plan_execute"] = Field(
         description=(
             "research: web search, data gathering from the internet. "
             "analysis: summarize, compare, extract patterns from data. "
             "generator: create reports, documents, structured output. "
             "code: run calculations, data processing, number crunching. "
             "monitor: long-running observation (only for monitoring tasks). "
-            "chat: casual conversation."
+            "chat: casual conversation. "
+            "plan_execute: complex multi-step tasks – plans upfront then executes (use for research+analysis+format)."
         )
     )
     message: str = Field(description="What this step should do -- a clear instruction for the agent")
@@ -55,7 +56,8 @@ PLAN_SYSTEM = (
     "- generator: create reports, documents, structured output, SEND EMAIL (tools: web_search, write_file, read_file, execute_python, send_email)\n"
     "- code: write and execute Python code for calculations/data processing (tools: execute_python, read_file, write_file)\n"
     "- monitor: web search and scrape for tracking tasks (tools: web_search, scrape_url)\n"
-    "- chat: casual conversation (no tools)\n\n"
+    "- chat: casual conversation (no tools)\n"
+    "- plan_execute: for complex tasks needing research+analysis+format – plans steps then executes each\n\n"
     "Platform LIMITATIONS (capabilities NOT available):\n"
     "- NO scheduling/cron -- all tasks execute immediately in a single request, cannot run for hours or on intervals\n"
     "- NO file upload to external services -- cannot post to social media, upload to cloud storage, etc.\n"

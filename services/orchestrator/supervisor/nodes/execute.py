@@ -11,14 +11,23 @@ from services.orchestrator.supervisor.state import (
     StepResult,
     WorkflowState,
 )
+from shared.code_approval_context import (
+    CodeApprovalContext,
+    CodeApprovalRequired,
+    clear_code_approval_context,
+    set_code_approval_context,
+)
 
 logger = logging.getLogger(__name__)
+
+CODE_AGENT_TYPES = {"code", "analysis", "generator"}
 
 
 async def _run_agent(
     step: PlanStep,
     context: str = "",
     conversation_history: list[dict[str, str]] | None = None,
+    code_approval_ctx: Optional[CodeApprovalContext] = None,
 ) -> StepResult:
     """Run a single async agent for a plan step."""
     from services.agents.registry import get_agent
@@ -26,6 +35,7 @@ async def _run_agent(
     t0 = time.perf_counter()
     logger.info("[execute] Agent %s started | step=%s", step.agent_type, step.node_id)
     try:
+        set_code_approval_context(code_approval_ctx)
         agent_fn = get_agent(step.agent_type)
         message = step.message
         if context:
@@ -52,7 +62,11 @@ async def _run_agent(
             result=result,
             success=True,
         )
+    except CodeApprovalRequired as e:
+        clear_code_approval_context()
+        raise e
     except Exception as e:
+        clear_code_approval_context()
         logger.exception("[execute] Agent %s FAILED | step=%s | %.2fs: %s",
                          step.agent_type, step.node_id, time.perf_counter() - t0, e)
         return StepResult(
@@ -62,6 +76,8 @@ async def _run_agent(
             error=str(e),
             success=False,
         )
+    finally:
+        clear_code_approval_context()
 
 
 def _get_context(step: PlanStep, results: list[StepResult]) -> str:
@@ -121,6 +137,10 @@ async def execute(state: WorkflowState) -> WorkflowState:
     completed_ids = {r.node_id for r in results}
     history = state.get("conversation_history") or []
     deadline = state.get("deadline", float("inf"))
+    require_approval = state.get("require_code_approval", False)
+    workflow_id = state.get("workflow_id", "")
+    session_id = state.get("session_id")
+    goal = state.get("goal", "")
 
     while len(completed_ids) < len(exec_plan.steps):
         remaining = deadline - time.perf_counter()
@@ -138,9 +158,35 @@ async def execute(state: WorkflowState) -> WorkflowState:
             step = ready[0]
             context = _get_context(step, results)
             logger.info("Executing step %s (%s)", step.node_id, step.agent_type)
+            code_approval_ctx = None
+            if require_approval and step.agent_type in CODE_AGENT_TYPES:
+                code_approval_ctx = CodeApprovalContext(
+                    workflow_id=workflow_id,
+                    step_id=step.node_id,
+                    session_id=session_id,
+                )
             if progress_queue:
                 await progress_queue.put({"type": "step_start", "node_id": step.node_id, "agent_type": step.agent_type})
-            result = await _run_agent(step, context, conversation_history=history)
+            try:
+                result = await _run_agent(step, context, conversation_history=history, code_approval_ctx=code_approval_ctx)
+            except CodeApprovalRequired as e:
+                from shared.pending_code_approval_manager import save_pending_code_approval
+                approval_id = save_pending_code_approval(
+                    workflow_id=e.workflow_id,
+                    session_id=e.session_id,
+                    code=e.code,
+                    step_id=e.step_id,
+                    original_goal=goal,
+                    output_format=state.get("output_format", "json"),
+                )
+                return {
+                    **state,
+                    "needs_code_approval": True,
+                    "pending_code_approval_id": approval_id,
+                    "pending_step_id": e.step_id,
+                    "code_to_approve": e.code,
+                    "step_results": results,
+                }
             results.append(result)
             completed_ids.add(step.node_id)
             if progress_queue:
@@ -157,12 +203,43 @@ async def execute(state: WorkflowState) -> WorkflowState:
             for s in ready:
                 if progress_queue:
                     await progress_queue.put({"type": "step_start", "node_id": s.node_id, "agent_type": s.agent_type})
+            code_approval_ctx = None
+            if require_approval and len(ready) == 1 and ready[0].agent_type in CODE_AGENT_TYPES:
+                step = ready[0]
+                code_approval_ctx = CodeApprovalContext(
+                    workflow_id=workflow_id,
+                    step_id=step.node_id,
+                    session_id=session_id,
+                )
             tasks = [
-                _run_agent(step, _get_context(step, results), conversation_history=history)
+                _run_agent(step, _get_context(step, results), conversation_history=history, code_approval_ctx=code_approval_ctx if step.agent_type in CODE_AGENT_TYPES else None)
                 for step in ready
             ]
-            batch_results = await asyncio.gather(*tasks)
-            for result in batch_results:
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, br in enumerate(batch_results):
+                if isinstance(br, CodeApprovalRequired):
+                    from shared.pending_code_approval_manager import save_pending_code_approval
+                    approval_id = save_pending_code_approval(
+                        workflow_id=br.workflow_id,
+                        session_id=br.session_id,
+                        code=br.code,
+                        step_id=br.step_id,
+                        original_goal=goal,
+                        output_format=state.get("output_format", "json"),
+                    )
+                    return {
+                        **state,
+                        "needs_code_approval": True,
+                        "pending_code_approval_id": approval_id,
+                        "pending_step_id": br.step_id,
+                        "code_to_approve": br.code,
+                        "step_results": results,
+                    }
+            resolved_results = [
+                r if isinstance(r, StepResult) else StepResult(node_id=ready[i].node_id, agent_type=ready[i].agent_type, result="", error=str(r), success=False)
+                for i, r in enumerate(batch_results)
+            ]
+            for result in resolved_results:
                 results.append(result)
                 completed_ids.add(result.node_id)
                 if progress_queue:

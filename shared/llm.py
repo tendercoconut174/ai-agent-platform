@@ -7,6 +7,8 @@ BaseChatModel interface. Provider selection via environment variables:
     LLM_MODEL             global model     (default: gpt-4o-mini)
     LLM_PROVIDER__<CMP>   per-component override  (e.g. LLM_PROVIDER__AGENTS=anthropic)
     LLM_MODEL__<CMP>      per-component override  (e.g. LLM_MODEL__AGENTS=claude-sonnet-4-20250514)
+    LLM_FALLBACK_PROVIDER fallback provider (e.g. groq) when primary fails
+    LLM_FALLBACK_MODEL    fallback model
 
 Backward compatible: falls back to OPENAI_API_KEY / OPENAI_MODEL when the new
 vars are not set.
@@ -18,6 +20,10 @@ import os
 from langchain_core.language_models.chat_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
+
+# Fallback provider/model for resilience
+_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "openai").lower()
+_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "gpt-4o-mini")
 
 _PROVIDER_DEFAULTS = {
     "openai": "gpt-4o-mini",
@@ -46,29 +52,8 @@ def _resolve(component: str | None) -> tuple[str, str]:
     return provider.lower().strip(), model.strip()
 
 
-def get_llm(
-    component: str | None = None,
-    temperature: float = 0,
-    **kwargs,
-) -> BaseChatModel:
-    """Return a LangChain chat model for the given component.
-
-    Args:
-        component: Logical name (e.g. "agents", "classify", "planner", "evaluator",
-                   "chat"). Used for per-component env var overrides.
-        temperature: Sampling temperature.
-        **kwargs: Extra keyword args forwarded to the provider constructor.
-
-    Returns:
-        A BaseChatModel instance.
-
-    Raises:
-        ImportError: When the required provider package is not installed.
-        ValueError: When the provider name is unrecognized.
-    """
-    provider, model = _resolve(component)
-    logger.debug("[llm] component=%s provider=%s model=%s temperature=%s", component, provider, model, temperature)
-
+def _create_llm(provider: str, model: str, temperature: float, **kwargs) -> BaseChatModel:
+    """Create LLM instance for given provider/model."""
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 
@@ -123,6 +108,40 @@ def get_llm(
         f"Unknown LLM provider '{provider}'. "
         f"Supported: openai, anthropic, google, ollama, groq"
     )
+
+
+def get_llm(
+    component: str | None = None,
+    temperature: float = 0,
+    use_fallback: bool = True,
+    **kwargs,
+) -> BaseChatModel:
+    """Return a LangChain chat model for the given component.
+
+    Args:
+        component: Logical name (e.g. "agents", "classify", "planner", "evaluator",
+                   "chat"). Used for per-component env var overrides.
+        temperature: Sampling temperature.
+        use_fallback: If True, wraps in fallback logic (primary fails -> try fallback).
+        **kwargs: Extra keyword args forwarded to the provider constructor.
+
+    Returns:
+        A BaseChatModel instance.
+
+    Raises:
+        ImportError: When the required provider package is not installed.
+        ValueError: When the provider name is unrecognized.
+    """
+    provider, model = _resolve(component)
+    logger.debug("[llm] component=%s provider=%s model=%s temperature=%s", component, provider, model, temperature)
+
+    llm = _create_llm(provider, model, temperature, **kwargs)
+
+    if use_fallback and (provider != _FALLBACK_PROVIDER or model != _FALLBACK_MODEL):
+        fallback = _create_llm(_FALLBACK_PROVIDER, _FALLBACK_MODEL, temperature, **kwargs)
+        return llm.with_fallbacks([fallback])
+
+    return llm
 
 
 def is_llm_available(component: str | None = None) -> bool:

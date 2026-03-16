@@ -65,9 +65,46 @@ docker compose up -d
 
 This starts gateway (8000), orchestrator (8001), and postgres (5432).
 
+## Observability
+
+### LangSmith Tracing
+
+Enable LangSmith to trace LLM calls, tool invocations, and token usage:
+
+```bash
+# In .env
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=your-langsmith-api-key
+LANGCHAIN_PROJECT=ai-agent-platform
+```
+
+Restart the services. Traces appear at [smith.langchain.com](https://smith.langchain.com).
+
+### Prometheus Metrics
+
+Gateway and Orchestrator expose `/metrics` in Prometheus format:
+
+- `ai_agent_requests_total` – request count by service, endpoint, status
+- `ai_agent_request_duration_seconds` – request latency histogram
+
+### Health Endpoints
+
+- `GET /health` – liveness (service is running)
+- `GET /ready` – readiness (Gateway checks DB; Orchestrator always ready)
+
 ## Test UI
 
-Open `http://localhost:8000` (or `http://localhost:8000/ui/`) to use the web test UI. It provides a chat interface, workflow steps panel, session management, and output format selection.
+Open `http://localhost:8000` (or `http://localhost:8000/ui/`) to use the web test UI. It provides:
+
+- **Chat interface** — Send messages and view responses
+- **Streaming** — Toggle "Stream" to receive live workflow steps via SSE (`POST /message/stream`)
+- **Steps panel** — See classify, plan, execute steps as they complete
+- **Code approval** — Toggle "Code approval" to pause for user approval before running Python code; banner shows proposed code with "Approve & run" button
+- **Clarification banner** — Separate area for replying when the system asks for clarification
+- **Clear chat** — Reset messages and steps
+- **Stop** — Cancel in-flight requests
+- **Session management** — Session ID in localStorage; "New session" to reset
+- **Output format** — JSON, PDF, Excel, Audio selector
 
 ## CLI Commands
 
@@ -96,6 +133,7 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
 DATABASE_URL=postgresql://dev:dev@localhost:5432/agent_platform
 ORCHESTRATOR_URL=http://localhost:8001
+AGENT_TIMEOUT_SECONDS=180
 FILE_WORKSPACE=/tmp/agent_workspace
 ```
 
@@ -132,6 +170,8 @@ ORM models are in `shared/models/`:
 | `MessageHistory` | `message_history` | Individual messages in a session |
 | `Workflow` | `workflows` | Multi-step workflow records |
 | `WorkflowStep` | `workflow_steps` | Individual steps in a workflow |
+| `PendingClarification` | `pending_clarifications` | Human-in-the-loop clarification state |
+| `PendingCodeApproval` | `pending_code_approvals` | Human-in-the-loop code approval state |
 
 After modifying any model, generate a migration:
 
@@ -163,11 +203,14 @@ uv run pytest --cov=services --cov=shared
 
 ```
 tests/
-  test_api.py              # Gateway endpoint tests (mocked orchestrator)
-  test_models.py           # Pydantic schema validation tests
-  test_research_agent.py   # Research agent tests (mocked LLM)
-  test_task_runner.py      # Task routing tests (mocked agents)
-  test_web_search.py       # Web search tool integration tests
+  test_api.py                    # Gateway endpoint tests (mocked orchestrator)
+  test_models.py                 # Pydantic schema validation tests
+  test_orchestrator_client.py    # Orchestrator HTTP client tests
+  test_pending_clarification.py # Clarification human-in-the-loop tests
+  test_pending_code_approval.py  # Code approval human-in-the-loop tests
+  test_research_agent.py         # Research agent tests (mocked LLM)
+  test_task_runner.py            # Task routing tests (mocked agents)
+  test_web_search.py            # Web search tool integration tests
 ```
 
 Tests use `unittest.mock.patch` to mock LLM calls and external services, so they run without an API key or running services.

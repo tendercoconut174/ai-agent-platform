@@ -22,6 +22,7 @@ async def call_orchestrator(
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     workflow_id: str | None = None,
+    require_code_approval: bool = False,
 ) -> dict[str, Any]:
     """Call orchestrator /orchestrate endpoint asynchronously."""
     payload: dict[str, object] = {
@@ -31,6 +32,7 @@ async def call_orchestrator(
         "session_id": session_id,
         "callback_url": callback_url,
         "conversation_history": conversation_history or [],
+        "require_code_approval": require_code_approval,
     }
     if workflow_id:
         payload["workflow_id"] = workflow_id
@@ -52,6 +54,7 @@ async def stream_orchestrator(
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     workflow_id: str | None = None,
+    require_code_approval: bool = False,
 ) -> AsyncGenerator[dict, None]:
     """Stream orchestrator /orchestrate/stream endpoint (SSE)."""
     payload: dict[str, object] = {
@@ -61,6 +64,7 @@ async def stream_orchestrator(
         "session_id": session_id,
         "callback_url": callback_url,
         "conversation_history": conversation_history or [],
+        "require_code_approval": require_code_approval,
     }
     if workflow_id:
         payload["workflow_id"] = workflow_id

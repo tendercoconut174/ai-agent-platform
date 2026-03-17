@@ -37,11 +37,27 @@ class TestMcpServer:
         tools = get_tools_for_agent("unknown_type")
         assert tools == []
 
+    def test_scheduler_has_schedule_tools(self) -> None:
+        """Scheduler agent has schedule, list, and cancel tools."""
+        tools = get_tools_for_agent("scheduler")
+        names = [t.name for t in tools]
+        assert "tool_schedule_task" in names
+        assert "tool_list_scheduled_tasks" in names
+        assert "tool_cancel_scheduled_task" in names
+
     def test_get_all_tools_includes_send_email(self) -> None:
         """get_all_tools includes tool_send_email."""
         all_tools = get_all_tools()
         names = [t.name for t in all_tools]
         assert "tool_send_email" in names
+
+    def test_get_all_tools_includes_scheduler_tools(self) -> None:
+        """get_all_tools includes scheduler tools."""
+        all_tools = get_all_tools()
+        names = [t.name for t in all_tools]
+        assert "tool_schedule_task" in names
+        assert "tool_list_scheduled_tasks" in names
+        assert "tool_cancel_scheduled_task" in names
 
     def test_list_tool_names_returns_strings(self) -> None:
         """list_tool_names returns list of tool name strings."""

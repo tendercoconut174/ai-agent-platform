@@ -74,6 +74,8 @@ After creating the agent file:
 1. Register it in `services/agents/registry.py`
 2. Assign tools in `shared/mcp/server.py` `TOOL_REGISTRY`
 
+Agents with `tool_execute_python` in their tool set are automatically treated as code-approval agents when `require_code_approval` is true (derived from `TOOL_REGISTRY`, not hardcoded).
+
 ---
 
 # Current Agent Pool
@@ -97,13 +99,18 @@ The Supervisor manages workflow state via `WorkflowState` (TypedDict). Individua
 class WorkflowState(TypedDict, total=False):
     goal: str
     output_format: str
-    intent: str              # casual | simple | complex | monitor
+    format_hint: str         # Agent-inferred planner instruction (from preference_inference)
+    is_clarification_resume: bool  # Skip classify when resuming after clarification
+    intent: str              # casual | simple | complex | monitor (agent-decided)
+    next_node: str          # chat_respond | ask_user | plan (agent-decided routing)
     plan: Optional[ExecutionPlan]
     step_results: list[StepResult]
     iteration_count: int
     goal_achieved: bool
     final_result: Optional[str]
 ```
+
+**Agent-driven decisions:** The classify node returns `next_node` directly (no hardcoded intent→node mapping). Code-approval agent types are derived from `TOOL_REGISTRY` (agents that have `tool_execute_python`), not hardcoded.
 
 ---
 
@@ -113,4 +120,5 @@ class WorkflowState(TypedDict, total=False):
 - `services/agents/registry.py` -- Agent type → runner mapping
 - `services/agents/*.py` -- Individual agent definitions
 - `shared/mcp/server.py` -- Tool registry (agent type → tools)
-- `services/orchestrator/supervisor/nodes/execute.py` -- Agent execution with dependency resolution
+- `services/orchestrator/supervisor/nodes/execute.py` -- Agent execution; code-approval agents derived from `TOOL_REGISTRY`
+- `shared/preference_inference.py` -- LLM infers output_format, require_code_approval, clean_message, format_hint

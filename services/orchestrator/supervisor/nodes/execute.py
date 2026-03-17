@@ -17,10 +17,14 @@ from shared.code_approval_context import (
     clear_code_approval_context,
     set_code_approval_context,
 )
+from shared.mcp.server import TOOL_REGISTRY, tool_execute_python
 
 logger = logging.getLogger(__name__)
 
-CODE_AGENT_TYPES = {"code", "analysis", "generator"}
+# Agent types that can run code (derived from tool registry, not hardcoded)
+CODE_AGENT_TYPES = frozenset(
+    k for k, tools in TOOL_REGISTRY.items() if tool_execute_python in tools
+)
 
 
 async def _run_agent(

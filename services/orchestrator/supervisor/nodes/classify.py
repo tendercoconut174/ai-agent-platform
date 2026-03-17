@@ -31,6 +31,7 @@ class Classification(BaseModel):
             "NEVER use casual for code-related requests: convert to Python, run code, implement algorithm, etc. "
             "simple: single-step factual task requiring one web search or calculation. "
             "Use for code tasks: convert X to Python, run this code, implement algorithm (single step). "
+            "Use for scheduling: remind me, run later, schedule X, run daily, run every hour (single step: schedule). "
             "complex: multi-step task needing research, data gathering, analysis, comparison, report generation. "
             "monitor: long-running observation, tracking, or alerting task over a period of time. "
             "needs_clarification: ONLY when the request is truly too vague to execute at all. "
@@ -39,13 +40,21 @@ class Classification(BaseModel):
             "'business impact of Iran war', 'tech sector') — those are simple or complex."
         )
     )
+    next_node: Literal["chat_respond", "ask_user", "plan"] = Field(
+        description=(
+            "chat_respond: for casual intent – direct conversational response. "
+            "ask_user: for needs_clarification – ask user for more details before planning. "
+            "plan: for simple, complex, or monitor – create execution plan."
+        )
+    )
     reasoning: str = Field(description="One-sentence explanation of why this intent was chosen")
 
 
 CLASSIFY_SYSTEM = (
     "You are an intent classifier for an AI agent platform. "
     "You will receive the user's latest message AND recent conversation history (if any). "
-    "Classify the user's LATEST message into exactly one category.\n\n"
+    "Classify the user's LATEST message into exactly one category and decide the next_node.\n\n"
+    "next_node rules: casual -> chat_respond; needs_clarification -> ask_user; simple/complex/monitor -> plan.\n\n"
     "Guidelines:\n"
     "- casual: greetings, small talk, follow-up questions that reference the previous conversation "
     "(e.g. 'who was last year', 'tell me more', 'what about X'), short messages that need context.\n"
@@ -60,6 +69,8 @@ CLASSIFY_SYSTEM = (
     "Do NOT use needs_clarification when the user has given a specific topic (e.g. 'business impact of Iran war', "
     "'petroleum companies', 'tech sector'). Prefer simple or complex in those cases.\n"
     "If the message contains '[User clarification]', the user already provided clarification — use simple or complex.\n\n"
+    "CRITICAL - Scheduling: 'schedule', 'remind', 'run later', 'run tomorrow', 'run daily', 'run every hour' "
+    "MUST go to plan (next_node=plan). The scheduler agent handles these. Never route scheduling to chat_respond.\n\n"
     "CRITICAL - Code execution: The casual path has NO tools and cannot run code. "
     "Requests involving code MUST be simple or complex: 'convert X to Python', 'run this code', 'execute', "
     "'implement in Python', 'write a script', 'translate C++ to Python', algorithm implementation, etc. "
@@ -71,8 +82,8 @@ CLASSIFY_SYSTEM = (
 _MAX_HISTORY_FOR_CLASSIFY = 6
 
 
-async def _classify_with_llm(message: str, history: list[dict[str, str]]) -> tuple[str, str]:
-    """Classify using structured LLM output with conversation context. Returns (intent, reasoning)."""
+async def _classify_with_llm(message: str, history: list[dict[str, str]]) -> tuple[str, str, str]:
+    """Classify using structured LLM output with conversation context. Returns (intent, next_node, reasoning)."""
     from shared.llm import get_llm
 
     llm = get_llm("classify", temperature=0)
@@ -94,7 +105,7 @@ async def _classify_with_llm(message: str, history: list[dict[str, str]]) -> tup
         msgs.append({"role": "user", "content": message})
 
     result = await structured_llm.ainvoke(msgs)
-    return result.intent, result.reasoning
+    return result.intent, result.next_node, result.reasoning
 
 
 async def classify(state: WorkflowState) -> WorkflowState:
@@ -104,18 +115,21 @@ async def classify(state: WorkflowState) -> WorkflowState:
     history = state.get("conversation_history") or []
     logger.info("[classify] START | goal=%s | history=%d msgs", goal[:120], len(history))
 
-    # User already provided clarification — never ask again; route to plan
-    if "[User clarification]" in goal:
-        logger.info("[classify] DONE  | intent=complex (has clarification) | %.2fs", time.perf_counter() - t0)
-        return {**state, "intent": "complex"}
+    # User already provided clarification — skip classify, route to plan (agent decision via flag)
+    if state.get("is_clarification_resume", False):
+        logger.info("[classify] DONE  | is_clarification_resume, routing to plan | %.2fs", time.perf_counter() - t0)
+        return {**state, "intent": "complex", "next_node": "plan"}
 
     from shared.llm import is_llm_available
 
     if is_llm_available("classify"):
-        intent, reasoning = await _classify_with_llm(goal, history)
-        logger.info("[classify] DONE  | intent=%s | reason=%s | %.2fs", intent, reasoning[:100], time.perf_counter() - t0)
+        intent, next_node, reasoning = await _classify_with_llm(goal, history)
+        logger.info("[classify] DONE  | intent=%s | next_node=%s | reason=%s | %.2fs",
+                    intent, next_node, reasoning[:100], time.perf_counter() - t0)
     else:
         intent = "casual"
-        logger.info("[classify] DONE  | intent=%s (no LLM, defaulting) | %.2fs", intent, time.perf_counter() - t0)
+        next_node = "chat_respond"
+        logger.info("[classify] DONE  | intent=%s | next_node=%s (no LLM, defaulting) | %.2fs",
+                    intent, next_node, time.perf_counter() - t0)
 
-    return {**state, "intent": intent}
+    return {**state, "intent": intent, "next_node": next_node}

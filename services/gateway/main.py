@@ -36,6 +36,12 @@ def root():
     return RedirectResponse(url="/ui/")
 
 
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+def chrome_devtools():
+    """Chrome DevTools probes this; return empty to avoid 404 logs."""
+    return {}
+
+
 @app.get("/health")
 def health():
     """Liveness probe - service is running."""

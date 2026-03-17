@@ -20,6 +20,7 @@ class TestClassifyNode:
         state: WorkflowState = {"goal": "hello", "conversation_history": []}
         result = await classify(state)
         assert result["intent"] == "casual"
+        assert result["next_node"] == "chat_respond"
 
     @pytest.mark.asyncio
     @patch("services.orchestrator.supervisor.nodes.classify._classify_with_llm", new_callable=AsyncMock)
@@ -27,12 +28,13 @@ class TestClassifyNode:
     async def test_returns_llm_intent(self, mock_available, mock_classify: AsyncMock) -> None:
         """When LLM available, returns classified intent."""
         mock_available.return_value = True
-        mock_classify.return_value = ("complex", "Multi-step task")
+        mock_classify.return_value = ("complex", "plan", "Multi-step task")
         from services.orchestrator.supervisor.nodes.classify import classify
 
         state: WorkflowState = {"goal": "fetch news and email me", "conversation_history": []}
         result = await classify(state)
         assert result["intent"] == "complex"
+        assert result["next_node"] == "plan"
 
     @pytest.mark.asyncio
     @patch("services.orchestrator.supervisor.nodes.classify._classify_with_llm", new_callable=AsyncMock)
@@ -40,24 +42,27 @@ class TestClassifyNode:
     async def test_returns_needs_clarification_intent(self, mock_available, mock_classify: AsyncMock) -> None:
         """When LLM detects vague request, returns needs_clarification intent."""
         mock_available.return_value = True
-        mock_classify.return_value = ("needs_clarification", "Request too vague")
+        mock_classify.return_value = ("needs_clarification", "ask_user", "Request too vague")
         from services.orchestrator.supervisor.nodes.classify import classify
 
         state: WorkflowState = {"goal": "research companies", "conversation_history": []}
         result = await classify(state)
         assert result["intent"] == "needs_clarification"
+        assert result["next_node"] == "ask_user"
 
     @pytest.mark.asyncio
-    async def test_shortcuts_to_complex_when_has_clarification(self) -> None:
-        """When goal contains [User clarification], route to complex without calling LLM."""
+    async def test_shortcuts_to_plan_when_clarification_resume(self) -> None:
+        """When is_clarification_resume flag is set, route to plan without calling LLM."""
         from services.orchestrator.supervisor.nodes.classify import classify
 
         state: WorkflowState = {
             "goal": "research companies\n\n[User clarification] petroleum sector",
             "conversation_history": [],
+            "is_clarification_resume": True,
         }
         result = await classify(state)
         assert result["intent"] == "complex"
+        assert result["next_node"] == "plan"
 
 
 class TestAskUserNode:

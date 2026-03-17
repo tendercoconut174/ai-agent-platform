@@ -1,0 +1,52 @@
+---
+description: All code must include logging for observability
+alwaysApply: true
+---
+
+# Logging Required
+
+**Core principle:** Every module, function, or agent that performs meaningful work must include logging. Use the standard `logging` module.
+
+## What to Log
+
+| When | Level | Example |
+|------|-------|---------|
+| Entry to async functions, agents, handlers | `INFO` | `logger.info("[agent] START \| msg_len=%d", len(msg))` |
+| Successful completion | `INFO` | `logger.info("[agent] DONE \| result_len=%d \| %.2fs", len(r), elapsed)` |
+| Fallbacks, retries, degraded paths | `WARNING` | `logger.warning("[agent] No LLM configured")` |
+| Errors, exceptions | `ERROR` or `logger.exception()` | `logger.exception("[agent] FAILED: %s", e)` |
+| Debug/diagnostic (optional) | `DEBUG` | `logger.debug("[agent] intermediate state: %s", state)` |
+
+## Conventions
+
+- **Timestamps required** – All log output must include timestamps. Use `shared.logging_config.setup_logging()` at app entry points (gateway, orchestrator, scheduler, workers). The formatter produces `YYYY-MM-DD HH:MM:SS.mmm`.
+- Use `logger = logging.getLogger(__name__)` at module top
+- Prefix log messages with `[component]` (e.g. `[research]`, `[scheduler]`, `[gateway]`)
+- Use structured fields: `msg_len`, `result_len`, `duration`, `step=N` — avoid string interpolation for large content
+- Truncate user content in logs (e.g. `msg[:120]`) to avoid noise
+
+## Examples
+
+```python
+# ✅ GOOD – entry, success, failure
+logger.info("[analysis] START | msg_len=%d", len(message))
+try:
+    result = await _agent(message)
+    logger.info("[analysis] DONE | result_len=%d | %.2fs", len(result), time.perf_counter() - t0)
+    return result
+except Exception as e:
+    logger.exception("[analysis] FAILED | %.2fs: %s", time.perf_counter() - t0, e)
+    raise
+```
+
+```python
+# ❌ BAD – no logging
+async def run(message: str) -> str:
+    return await _agent(message)
+```
+
+## Exceptions
+
+- Pure data models (Pydantic, SQLAlchemy models) — no logging
+- Test files — logging optional
+- One-line pass-through or trivial getters — logging optional

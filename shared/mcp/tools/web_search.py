@@ -20,6 +20,7 @@ def web_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     Returns:
         List of dicts with title, body, href.
     """
+    logger.info("[web_search] web_search | query=%s | max_results=%d", query[:60], max_results)
     from ddgs import DDGS
 
     max_results = min(max(max_results, 1), 20)
@@ -34,18 +35,21 @@ def web_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     try:
         raw = list(ddgs.text(query, max_results=max_results))
         if raw:
-            return _parse(raw)
+            parsed = _parse(raw)
+            logger.info("[web_search] DONE | result_count=%d", len(parsed))
+            return parsed
     except Exception as exc:
-        logger.debug("Search default backend failed: %s", exc)
+        logger.debug("[web_search] Default backend failed: %s", exc)
 
     for backend in _BACKENDS:
         try:
             raw = list(ddgs.text(query, max_results=max_results, backend=backend))
             if raw:
-                logger.debug("Search succeeded with backend=%s", backend)
+                logger.debug("[web_search] Succeeded with backend=%s", backend)
                 return _parse(raw)
         except Exception as exc:
-            logger.debug("Search backend %s failed: %s", backend, exc)
+            logger.debug("[web_search] Backend %s failed: %s", backend, exc)
             continue
 
+    logger.warning("[web_search] All backends failed for query=%s", query[:60])
     return []

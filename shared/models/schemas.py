@@ -112,6 +112,14 @@ class OrchestratorRequest(BaseModel):
         default=None,
         description="When resuming after code approval: approval_id from needs_code_approval response",
     )
+    format_hint: str = Field(
+        default="",
+        description="Agent-inferred instruction for planner on output formatting (e.g. markdown table, spoken summary).",
+    )
+    is_clarification_resume: bool = Field(
+        default=False,
+        description="True when user is resuming after providing clarification; skip classify and route to plan.",
+    )
 
 
 class TaskPayload(BaseModel):

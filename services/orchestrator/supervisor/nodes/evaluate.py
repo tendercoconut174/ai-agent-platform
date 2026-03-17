@@ -25,20 +25,25 @@ EVAL_SYSTEM = (
     "- If the result is missing key information, is an error, or is off-topic, mark achieved=false.\n"
     "- Be lenient: partial but useful results should be accepted.\n"
     "- A result that acknowledges it cannot find information is still considered achieved "
-    "if the search was reasonable."
+    "if the search was reasonable.\n"
+    "- For simple/casual intents, prefer achieved=true when the result is relevant and complete."
 )
 
 
-async def _evaluate_with_llm(goal: str, result: str) -> tuple[bool, str]:
+async def _evaluate_with_llm(goal: str, result: str, intent: str = "simple") -> tuple[bool, str]:
     """Evaluate using structured LLM output. Returns (achieved, reasoning)."""
     from shared.llm import get_llm
 
     llm = get_llm("evaluator", temperature=0)
     structured_llm = llm.with_structured_output(Evaluation)
 
+    user_content = f"Goal: {goal}\n\nResult (first 2000 chars):\n{result[:2000]}"
+    if intent:
+        user_content += f"\n\n(Intent was: {intent} – use for context when deciding.)"
+
     evaluation: Evaluation = await structured_llm.ainvoke([
         {"role": "system", "content": EVAL_SYSTEM},
-        {"role": "user", "content": f"Goal: {goal}\n\nResult (first 2000 chars):\n{result[:2000]}"},
+        {"role": "user", "content": user_content},
     ])
 
     return evaluation.achieved, evaluation.reasoning
@@ -72,15 +77,11 @@ async def evaluate(state: WorkflowState) -> WorkflowState:
         logger.info("[evaluate] DONE  | no result or error, goal NOT achieved | %.2fs", time.perf_counter() - t0)
         return {**state, "iteration_count": iteration, "goal_achieved": False}
 
-    intent = state.get("intent", "simple")
-    if intent in ("casual", "simple"):
-        logger.info("[evaluate] DONE  | intent=%s, auto-accepting | %.2fs", intent, time.perf_counter() - t0)
-        return {**state, "iteration_count": iteration, "goal_achieved": True}
-
     from shared.llm import is_llm_available
 
+    intent = state.get("intent", "simple")
     if is_llm_available("evaluator"):
-        achieved, reasoning = await _evaluate_with_llm(goal, final_result)
+        achieved, reasoning = await _evaluate_with_llm(goal, final_result, intent)
         logger.info("[evaluate] DONE  | goal_achieved=%s | reason=%s | %.2fs", achieved, reasoning[:100], time.perf_counter() - t0)
     else:
         achieved = bool(final_result and len(final_result) > 20)

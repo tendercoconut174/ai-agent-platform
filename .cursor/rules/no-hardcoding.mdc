@@ -1,0 +1,31 @@
+---
+description: No hardcoding — all decisions must be LLM-generated
+alwaysApply: true
+---
+
+# No Hardcoding — LLM-Driven Decisions
+
+**Core principle:** No hardcoded patterns, mappings, or branching logic for user-facing or workflow decisions. All such decisions must be made by LLM inference or derived from registry/config.
+
+## What to Avoid
+
+- Regex or string patterns for format detection, intent routing, or message parsing
+- Hardcoded dicts mapping intent → node, format → hint, agent_type → code_approval
+- Fixed string literals used for branching (e.g. `if intent == "casual"`)
+- Hardcoded lists of options (output formats, agent types) used for decisions
+
+## What to Use Instead
+
+| Instead of | Use |
+|------------|-----|
+| Regex/patterns for format | `shared/preference_inference.infer_preferences()` — LLM infers output_format, require_code_approval, format_hint, clean_message |
+| Intent → node mapping | Classify agent returns `next_node`; router uses `state.get("next_node")` |
+| Hardcoded CODE_AGENT_TYPES | Derive from `TOOL_REGISTRY` (agents with `tool_execute_python`) |
+| Hardcoded FILE_FORMATS | `SUPPORTED_FILE_FORMATS` from delivery service |
+| String markers for resume | Flags: `is_clarification_resume`, `skip_preference_inference` |
+
+## Exceptions
+
+- **Infrastructure/config**: LLM provider selection, timeouts, env vars — these are configuration, not runtime decisions.
+- **Security**: Code executor safe_modules, tool registry — platform capabilities, not user-decided.
+- **Fallbacks when LLM unavailable**: Minimal defaults (e.g. intent=casual) are acceptable only when `is_llm_available()` is false.

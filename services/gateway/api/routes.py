@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import logging
-import re
 import time
 from typing import Any, Optional, Union
 
@@ -26,44 +25,11 @@ from shared.pending_code_approval_manager import (
 )
 from services.gateway.session_manager import add_message, get_history, get_or_create_session
 from shared.models.schemas import MessageRequest
+from shared.preference_inference import infer_preferences
+from services.delivery.delivery_service import SUPPORTED_FILE_FORMATS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-FILE_FORMATS = {"pdf", "xl", "audio"}
-
-FORMAT_PATTERNS = {
-    "pdf": ["give me pdf", "in pdf", "as pdf", "pdf format", "output as pdf", "return pdf"],
-    "xl": ["give me excel", "in excel", "as xl", "spreadsheet", "excel format", "return excel"],
-}
-
-STRIP_PATTERNS = [
-    r"\bgive me (pdf|excel|xl)\s*",
-    r"\bin (pdf|excel|xl) (format\s*)?",
-    r"\bas (pdf|excel|xl)\s*",
-    r"\b(pdf|excel|xl) (format\s*)?(of\s*)?",
-    r"\breturn (as\s+)?(pdf|excel|xl)\s*",
-    r"\boutput as (pdf|excel|xl)\s*",
-]
-
-
-def _infer_output_format(message: str, explicit: str) -> str:
-    if explicit != "json":
-        return explicit
-    msg = message.lower()
-    for fmt, patterns in FORMAT_PATTERNS.items():
-        if any(p in msg for p in patterns):
-            return fmt
-    return explicit
-
-
-def _strip_format_hints(message: str, fmt: str) -> str:
-    if fmt == "json":
-        return message
-    result = message
-    for p in STRIP_PATTERNS:
-        result = re.sub(p, " ", result, flags=re.IGNORECASE)
-    return " ".join(result.split()).strip() or message
 
 
 def _extract_error(exc: Exception) -> str:
@@ -100,6 +66,8 @@ async def message_endpoint(
         message_to_send = payload.message
         output_format_override = payload.output_format
         require_code_approval = payload.require_code_approval
+        skip_preference_inference = False
+        is_clarification_resume = False
 
         if payload.code_approval_id:
             pending = await asyncio.to_thread(
@@ -135,6 +103,7 @@ async def message_endpoint(
                     )
                 output_format_override = pending.output_format
                 require_code_approval = False
+                skip_preference_inference = True
                 logger.info("[gateway] Resuming with code approval | has_error=%s | output_len=%d", has_error, len(output))
             else:
                 logger.warning("[gateway] code_approval_id=%s not found; returning error to break loop", payload.code_approval_id)
@@ -160,6 +129,8 @@ async def message_endpoint(
                     f"{pending.original_goal}\n\n[User clarification] {payload.message}"
                 )
                 output_format_override = pending.output_format
+                skip_preference_inference = True
+                is_clarification_resume = True
                 logger.info("[gateway] Resuming workflow %s with clarification | merged goal=%s",
                             payload.workflow_id, message_to_send[:120])
             else:
@@ -171,11 +142,23 @@ async def message_endpoint(
 
         await asyncio.to_thread(add_message, session_id, "user", payload.message)
 
-        output_format = _infer_output_format(message_to_send, output_format_override)
-        clean_message = _strip_format_hints(message_to_send, output_format)
+        if skip_preference_inference:
+            output_format = output_format_override
+            clean_message = message_to_send
+            format_hint = ""
+        else:
+            prefs = await infer_preferences(
+                message_to_send,
+                explicit_format=output_format_override,
+                explicit_require_approval=require_code_approval,
+            )
+            output_format = prefs.output_format
+            clean_message = prefs.clean_message
+            require_code_approval = prefs.require_code_approval
+            format_hint = prefs.format_hint
         history = await asyncio.to_thread(get_history, session_id, 20)
-        logger.info("[gateway] Inferred format=%s | mode=%s | history=%d msgs | forwarding to orchestrator",
-                     output_format, payload.mode, len(history))
+        logger.info("[gateway] Inferred format=%s | require_approval=%s | mode=%s | history=%d msgs | forwarding to orchestrator",
+                     output_format, require_code_approval, payload.mode, len(history))
 
         data = await call_orchestrator(
             message=clean_message,
@@ -186,6 +169,8 @@ async def message_endpoint(
             conversation_history=history,
             workflow_id=payload.workflow_id if not payload.code_approval_id else None,
             require_code_approval=require_code_approval,
+            format_hint=format_hint,
+            is_clarification_resume=is_clarification_resume,
         )
         elapsed = time.perf_counter() - t0
         logger.info("[gateway] Orchestrator responded in %.2fs", elapsed)
@@ -221,7 +206,7 @@ async def message_endpoint(
                 )
                 logger.info("[gateway] Saved pending code approval locally for approval_id=%s", data["code_approval_id"])
 
-        if output_format in FILE_FORMATS and data.get("content_base64") and data.get("content_type"):
+        if output_format in SUPPORTED_FILE_FORMATS and data.get("content_base64") and data.get("content_type"):
             raw = base64.b64decode(data["content_base64"])
             ext = "xlsx" if output_format == "xl" else output_format
             filename = data.get("filename") or f"result.{ext}"
@@ -261,13 +246,19 @@ async def message_upload_endpoint(
         if not combined:
             raise HTTPException(status_code=400, detail="No input provided")
 
-        fmt = _infer_output_format(combined, output_format)
-        clean = _strip_format_hints(combined, fmt)
-        data = await call_orchestrator(message=clean, output_format=fmt, mode=mode, session_id=session_id)
+        prefs = await infer_preferences(combined, explicit_format=output_format, explicit_require_approval=False)
+        data = await call_orchestrator(
+            message=prefs.clean_message,
+            output_format=prefs.output_format,
+            mode=mode,
+            session_id=session_id,
+            format_hint=prefs.format_hint,
+            is_clarification_resume=False,
+        )
 
-        if fmt in FILE_FORMATS and data.get("content_base64") and data.get("content_type"):
+        if prefs.output_format in SUPPORTED_FILE_FORMATS and data.get("content_base64") and data.get("content_type"):
             raw = base64.b64decode(data["content_base64"])
-            ext = "xlsx" if fmt == "xl" else fmt
+            ext = "xlsx" if prefs.output_format == "xl" else prefs.output_format
             filename = data.get("filename") or f"result.{ext}"
             return Response(
                 content=raw,
@@ -295,6 +286,8 @@ async def message_stream_endpoint(
             message_to_send = payload.message
             output_format_override = payload.output_format
             require_code_approval = payload.require_code_approval
+            skip_preference_inference = False
+            is_clarification_resume = False
 
             if payload.code_approval_id:
                 pending = await asyncio.to_thread(
@@ -324,6 +317,7 @@ async def message_stream_endpoint(
                         )
                     output_format_override = pending.output_format
                     require_code_approval = False
+                    skip_preference_inference = True
                 else:
                     logger.warning("[gateway] code_approval_id=%s not found; returning error to break loop", payload.code_approval_id)
                     await asyncio.to_thread(add_message, session_id, "user", payload.message)
@@ -347,10 +341,24 @@ async def message_stream_endpoint(
                 if pending:
                     message_to_send = f"{pending.original_goal}\n\n[User clarification] {payload.message}"
                     output_format_override = pending.output_format
+                    skip_preference_inference = True
+                    is_clarification_resume = True
 
             await asyncio.to_thread(add_message, session_id, "user", payload.message)
-            output_format = _infer_output_format(message_to_send, output_format_override)
-            clean_message = _strip_format_hints(message_to_send, output_format)
+            if skip_preference_inference:
+                output_format = output_format_override
+                clean_message = message_to_send
+                format_hint = ""
+            else:
+                prefs = await infer_preferences(
+                    message_to_send,
+                    explicit_format=output_format_override,
+                    explicit_require_approval=require_code_approval,
+                )
+                output_format = prefs.output_format
+                clean_message = prefs.clean_message
+                require_code_approval = prefs.require_code_approval
+                format_hint = prefs.format_hint
             history = await asyncio.to_thread(get_history, session_id, 20)
 
             async for event in stream_orchestrator(
@@ -361,6 +369,8 @@ async def message_stream_endpoint(
                 conversation_history=history,
                 workflow_id=payload.workflow_id if not payload.code_approval_id else None,
                 require_code_approval=require_code_approval,
+                format_hint=format_hint,
+                is_clarification_resume=is_clarification_resume,
             ):
                 event["session_id"] = session_id
                 if event.get("type") == "done":

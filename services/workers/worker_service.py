@@ -15,8 +15,9 @@ load_dotenv()
 
 from platform_queue.task_queue import ack_task, consume_task, publish_progress, push_result
 from services.agents.registry import get_agent
+from shared.logging_config import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+setup_logging()
 logger = logging.getLogger("worker")
 
 _shutdown = False

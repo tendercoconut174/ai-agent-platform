@@ -23,6 +23,18 @@ services:
     ports: ["8001:8001"]
     depends_on: [postgres]
 
+  scheduler:
+    dns: [8.8.8.8, 8.8.4.4]
+    env_file: [.env]
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://dev:dev@postgres:5432/agent_platform
+      ORCHESTRATOR_URL: http://orchestrator:8001
+    command: ["uv", "run", "python", "main.py", "scheduler"]
+    depends_on: [orchestrator, postgres]
+
   postgres:
     image: postgres:15
     environment:

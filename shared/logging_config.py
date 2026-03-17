@@ -1,4 +1,7 @@
-"""Centralized logging configuration with file + console output."""
+"""Centralized logging configuration with file + console output.
+
+All log output includes timestamps (YYYY-MM-DD HH:MM:SS.mmm) for observability.
+"""
 
 import logging
 import os
@@ -10,6 +13,7 @@ _configured = False
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 LOG_FILE = os.path.join(LOG_DIR, "platform.log")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Timestamp required: %(asctime)s.%(msecs)03d = YYYY-MM-DD HH:MM:SS.mmm
 LOG_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)-7s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB

@@ -34,11 +34,11 @@ The system is split into two FastAPI services (Gateway and Orchestrator), a shar
                           │  │                                    │  │
                           │  │  classify ──► plan ──► execute     │  │
                           │  │     │              ▲       │       │  │
-                          │  │     │casual        │       ▼       │  │
+                          │  │     │next_node     │       ▼       │  │
                           │  │     ▼          replan   evaluate   │  │
-                          │  │  chat_respond              │       │  │
+                          │  │  chat_respond / ask_user / plan    │  │
                           │  │     │                      ▼       │  │
-                          │  │     │needs_clarification   done    │  │
+                          │  │     │                      done    │  │
                           │  │     ▼                      │       │  │
                           │  │  ask_user ──► END          │       │  │
                           │  │     └──────► deliver ◄─────┘       │  │
@@ -74,7 +74,7 @@ The user-facing API layer. Responsibilities:
 
 - **API endpoints**: `POST /message` (JSON), `POST /message/stream` (SSE), and `POST /message/upload` (multipart)
 - **Input processing**: Converts multi-modal input (audio, images, files) into text using Whisper, GPT-4V, and text extraction
-- **Format inference**: Detects output format hints in messages ("give me pdf", "as excel") and strips them before forwarding
+- **Preference inference**: Uses an LLM to infer `output_format`, `require_code_approval`, `clean_message` (with format/approval hints removed), and `format_hint` (planner instruction for output formatting) — no regex or hardcoded patterns
 - **Session management**: Creates/retrieves sessions and stores message history in PostgreSQL (with in-memory fallback)
 - **File delivery**: Returns binary file downloads (PDF, Excel, audio) with proper content types
 
@@ -90,12 +90,12 @@ A compiled LangGraph `StateGraph` with the following nodes:
 
 | Node | Purpose |
 |------|---------|
-| **classify** | Determines user intent: `casual`, `simple`, `complex`, `monitor`, or `needs_clarification` |
+| **classify** | LLM determines intent and **next_node** (`chat_respond`, `ask_user`, or `plan`) — routing is agent-decided, not hardcoded |
 | **chat_respond** | Direct LLM response for casual messages (no planning) |
 | **ask_user** | Human-in-the-loop: generates a clarifying question when the goal is vague or ambiguous |
-| **plan** | LLM generates a DAG of `PlanStep`s with agent types, messages, and dependencies |
-| **execute** | Dispatches steps to agents, respecting dependencies; parallelizes independent steps |
-| **evaluate** | LLM evaluates whether the result satisfies the user's goal |
+| **plan** | LLM generates a DAG of `PlanStep`s; uses agent-inferred `format_hint` for output instructions |
+| **execute** | Dispatches steps to agents; code-approval agents derived from `TOOL_REGISTRY` (not hardcoded) |
+| **evaluate** | LLM always evaluates whether the result satisfies the goal (intent passed as context) |
 | **deliver** | Formats the final result text |
 
 #### Follow-up Context
@@ -104,7 +104,7 @@ When the user sends a follow-up (e.g. "can you write one with python" after aski
 
 #### Routing Logic
 
-- After **classify**: casual → `chat_respond`; needs_clarification → `ask_user` (→ END); otherwise → `plan`
+- After **classify**: Routes to `state.next_node` (agent-decided: `chat_respond`, `ask_user`, or `plan`). When `is_clarification_resume` is true, skips classify and routes directly to `plan`.
 - After **evaluate**: goal achieved → `deliver`; not achieved → `plan` (replan loop, max 5 iterations)
 
 #### Workflow State
@@ -113,9 +113,12 @@ When the user sends a follow-up (e.g. "can you write one with python" after aski
 class WorkflowState(TypedDict, total=False):
     goal: str                          # User's original message
     output_format: str                 # json, pdf, xl, audio
+    format_hint: str                   # Agent-inferred instruction for planner (e.g. "Format as markdown table")
     session_id: Optional[str]
     workflow_id: Optional[str]
-    intent: str                        # casual, simple, complex, monitor
+    is_clarification_resume: bool       # True when resuming after clarification; skip classify
+    intent: str                        # casual, simple, complex, monitor (agent-decided)
+    next_node: str                     # chat_respond | ask_user | plan (agent-decided routing)
     plan: Optional[ExecutionPlan]      # DAG of PlanSteps
     step_results: list[StepResult]     # Results from executed steps
     iteration_count: int               # Current replan iteration
@@ -180,7 +183,7 @@ When the classifier detects a vague or ambiguous request (`needs_clarification` 
 
 ### Human-in-the-Loop (Code Approval)
 
-When `require_code_approval` is true and a code/analysis/generator agent proposes Python code, the `execute_python` tool raises `CodeApprovalRequired` instead of running the code. The execute node saves the pending approval in `pending_code_approvals` (PostgreSQL or in-memory) and returns `needs_code_approval: true` with `code_approval_id` and `code`. The user reviews the code and resumes by sending a follow-up with `code_approval_id`. The gateway loads the pending approval, runs the code via `execute_python`, and forwards the output to the orchestrator. The agent receives the output and continues (e.g. analyzes and delivers the final answer).
+When `require_code_approval` is true and an agent that has `execute_python` in its tool set proposes Python code (agents derived from `TOOL_REGISTRY`, not hardcoded), the `execute_python` tool raises `CodeApprovalRequired` instead of running the code. The execute node saves the pending approval in `pending_code_approvals` (PostgreSQL or in-memory) and returns `needs_code_approval: true` with `code_approval_id` and `code`. The user reviews the code and resumes by sending a follow-up with `code_approval_id`. The gateway loads the pending approval, runs the code via `execute_python`, and forwards the output to the orchestrator. The agent receives the output and continues (e.g. analyzes and delivers the final answer).
 
 **Flow:**
 1. User: `{"message": "calculate fibonacci(10)", "require_code_approval": true}` → Agent proposes code → Response: `{"needs_code_approval": true, "code_approval_id": "...", "code": "def fib(n): ..."}`
@@ -203,7 +206,7 @@ Provides conversation continuity:
 ## Data Flow: Complex Task Example
 
 1. User sends: `{"message": "research top 5 tech companies and create an excel report"}`
-2. **Gateway** infers `output_format=xl`, strips "excel report" from message, creates/retrieves session
+2. **Gateway** preference inference infers `output_format=xl`, `format_hint` (e.g. "Format as markdown table"), `clean_message`; creates/retrieves session
 3. **Gateway** calls `POST /orchestrate` on the Orchestrator
 4. **Supervisor.classify**: LLM classifies intent as `complex`
 5. **Supervisor.plan**: LLM creates a 3-step DAG:
@@ -220,14 +223,14 @@ Provides conversation continuity:
 
 1. User sends: `{"message": "research companies"}`
 2. **Gateway** creates session, forwards to Orchestrator
-3. **Supervisor.classify**: LLM detects `needs_clarification` (too vague)
+3. **Supervisor.classify**: LLM detects `needs_clarification`, returns `next_node=ask_user`
 4. **Supervisor.ask_user**: LLM generates: "Which industry or sector are you interested in?"
 5. **Orchestrator** returns `{needs_clarification: true, question: "...", workflow_id: "..."}` without calling deliver
 6. **Gateway** saves pending clarification (original_goal, question, output_format) and returns to user
 7. User sends: `{"message": "tech sector", "workflow_id": "..."}`
-8. **Gateway** loads pending clarification, merges: "research companies\n\n[User clarification] tech sector"
-9. **Gateway** forwards merged goal to Orchestrator (normal flow)
-10. **Supervisor** runs classify → plan → execute → evaluate → deliver
+8. **Gateway** loads pending clarification, merges goal, sets `is_clarification_resume=true`, forwards to Orchestrator
+9. **Supervisor.classify**: Sees `is_clarification_resume`, routes directly to `plan` (no LLM call)
+10. **Supervisor** runs plan → execute → evaluate → deliver
 11. **Gateway** returns final result
 
 ## Data Flow: Code Approval Example

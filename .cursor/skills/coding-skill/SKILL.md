@@ -53,6 +53,7 @@ All generated code must follow the standards defined in this document.
 - Do NOT hardcode `ChatOpenAI` -- always use `get_llm()` from `shared/llm.py`.
 - Do NOT introduce unnecessary libraries.
 - Prefer Python standard library where possible.
+- **Do NOT use regex or hardcoded patterns for user-facing decisions** — use LLM inference or registry-driven config.
 - **Always update README.md and relevant docs after changes** (see `change-docs-skill`).
 
 ---
@@ -204,6 +205,13 @@ def tool_my_tool(input: str) -> str:
     """Description for LLM tool selection."""
     return result
 ```
+
+## Avoid hardcoding — use agent inference or registry
+
+- **Preference inference**: Use `shared/preference_inference.infer_preferences()` for output_format, require_code_approval, clean_message, format_hint — never regex or pattern matching.
+- **Routing**: Classify agent returns `next_node`; router uses `state.get("next_node")` — no hardcoded intent→node mapping.
+- **Code-approval agents**: Derive from `TOOL_REGISTRY` (agents with `tool_execute_python`), not a hardcoded set.
+- **File formats**: Use `SUPPORTED_FILE_FORMATS` from delivery service, not a local constant.
 
 ## Pydantic schemas
 

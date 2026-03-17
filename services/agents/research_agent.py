@@ -7,6 +7,7 @@ Uses a two-phase approach to guarantee web search:
 """
 
 import logging
+import time
 
 from services.agents.base_agent import create_react_agent
 from shared.llm import get_llm, is_llm_available
@@ -47,7 +48,11 @@ async def _pre_search(query: str) -> str:
 
 
 async def run(message: str) -> str:
+    t0 = time.perf_counter()
+    logger.info("[research] START | msg_len=%d", len(message))
+
     if not is_llm_available("agents"):
+        logger.warning("[research] No LLM configured")
         return f"[research] No LLM API key configured. Message: {message}"
 
     search_results = await _pre_search(message)
@@ -64,8 +69,10 @@ async def run(message: str) -> str:
         ])
         result = (response.content or "").strip()
         if result:
-            logger.info("[research] synthesis done | result_len=%d", len(result))
+            logger.info("[research] DONE | synthesis | result_len=%d | %.2fs", len(result), time.perf_counter() - t0)
             return result
 
     logger.warning("[research] pre-search empty or synthesis failed, using full ReAct agent")
-    return await _agent(message)
+    result = await _agent(message)
+    logger.info("[research] DONE | ReAct fallback | result_len=%d | %.2fs", len(result), time.perf_counter() - t0)
+    return result

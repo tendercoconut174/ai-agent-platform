@@ -23,6 +23,7 @@ if config.config_file_name is not None:
 # Import all models so Alembic sees them
 from shared.models.base import Base
 from shared.models.pending_clarification import PendingClarification
+from shared.models.scheduled_task import ScheduledTask
 from shared.models.session import MessageHistory, Session
 from shared.models.workflow import Workflow, WorkflowStep
 

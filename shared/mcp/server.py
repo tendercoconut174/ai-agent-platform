@@ -10,6 +10,11 @@ from shared.mcp.tools.code_executor import execute_python
 from shared.mcp.tools.email_sender import send_email
 from shared.mcp.tools.file_io import list_files, read_file, write_file
 from shared.mcp.tools.media_processor import describe_image, text_to_speech, transcribe_audio
+from shared.mcp.tools.scheduler import (
+    tool_cancel_scheduled_task,
+    tool_list_scheduled_tasks,
+    tool_schedule_task,
+)
 from shared.mcp.tools.url_scraper import scrape_url
 from shared.mcp.tools.web_search import web_search
 
@@ -142,6 +147,7 @@ TOOL_REGISTRY: dict[str, list] = {
     "code": [tool_execute_python, tool_read_file, tool_write_file, tool_list_files],
     "monitor": [tool_web_search, tool_scrape_url],
     "chat": [],
+    "scheduler": [tool_schedule_task, tool_list_scheduled_tasks, tool_cancel_scheduled_task],
 }
 
 ALL_TOOLS = [
@@ -155,6 +161,9 @@ ALL_TOOLS = [
     tool_transcribe_audio,
     tool_text_to_speech,
     tool_describe_image,
+    tool_schedule_task,
+    tool_list_scheduled_tasks,
+    tool_cancel_scheduled_task,
 ]
 
 

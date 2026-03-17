@@ -59,15 +59,15 @@ def send_email(
             server.starttls()
             server.login(user, password)
             server.sendmail(sender, to_email, msg.as_string())
-        logger.info("Email sent to %s | subject=%s", to_email, subject[:50])
+        logger.info("[email_sender] Email sent | to=%s | subject=%s", to_email, subject[:50])
         return {"success": True, "message": f"Email sent to {to_email}"}
     except smtplib.SMTPAuthenticationError as e:
-        logger.warning("SMTP auth failed: %s", e)
+        logger.warning("[email_sender] SMTP auth failed: %s", e)
         return {
             "success": False,
             "message": "SMTP authentication failed. For Gmail, use an App Password.",
             "error": str(e),
         }
     except Exception as e:
-        logger.exception("Email send failed: %s", e)
+        logger.exception("[email_sender] Email send failed: %s", e)
         return {"success": False, "message": str(e), "error": str(e)}

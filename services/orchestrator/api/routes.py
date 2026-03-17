@@ -31,6 +31,8 @@ async def orchestrate_endpoint(payload: OrchestratorRequest) -> dict[str, Any]:
             callback_url=payload.callback_url,
             conversation_history=payload.conversation_history,
             require_code_approval=payload.require_code_approval,
+            format_hint=payload.format_hint,
+            is_clarification_resume=payload.is_clarification_resume,
         )
         workflow_elapsed = time.perf_counter() - t0
         workflow_id = state.get("workflow_id")
@@ -106,6 +108,8 @@ async def orchestrate_stream_endpoint(payload: OrchestratorRequest) -> EventSour
                 callback_url=payload.callback_url,
                 conversation_history=payload.conversation_history,
                 require_code_approval=payload.require_code_approval,
+                format_hint=payload.format_hint,
+                is_clarification_resume=payload.is_clarification_resume,
             ):
                 yield {"data": json.dumps(event)}
         except Exception as e:

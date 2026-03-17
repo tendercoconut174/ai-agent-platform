@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections import defaultdict
@@ -10,7 +11,7 @@ from typing import Optional
 
 from starlette.requests import Request
 
-logger = __import__("logging").getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class InMemoryRateLimiter:
@@ -55,5 +56,6 @@ async def rate_limit_dep(request: Request) -> None:
     """FastAPI dependency for rate limiting by client IP."""
     key = get_client_key(request)
     if not await _limiter.is_allowed(key):
+        logger.warning("[rate_limit] Rate limit exceeded | key=%s", key[:20])
         from fastapi import HTTPException
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")

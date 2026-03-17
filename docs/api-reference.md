@@ -48,13 +48,15 @@ Synchronous message endpoint. Sends the user message to the orchestrator, waits 
 | `require_code_approval` | boolean | no | false | When true, pause for user approval before running Python code |
 | `code_approval_id` | string | no | null | When resuming after code approval: the `code_approval_id` from the `needs_code_approval` response |
 
-**Output Format Auto-Detection:**
+**Preference Inference:**
 
-The gateway automatically detects format requests in the message text:
-- "give me pdf", "in pdf", "as pdf" → `output_format=pdf`
-- "give me excel", "in excel", "as xl", "spreadsheet" → `output_format=xl`
+The gateway uses an LLM to infer preferences from the message text:
+- **output_format**: Detects requests for PDF, Excel, JSON, audio, markdown, etc.
+- **require_code_approval**: Detects when the user wants to approve code before execution.
+- **clean_message**: Strips format/approval hints so agents focus on the actual task.
+- **format_hint**: Instruction for the planner (e.g. "Format as markdown table", "Format as concise spoken summary").
 
-The format hint is stripped from the message before it reaches the orchestrator, so agents focus on the actual task.
+No regex or hardcoded patterns are used; inference is fully LLM-based. On resume flows (clarification, code approval), inference is skipped and the merged message is forwarded as-is.
 
 **Response (JSON format):**
 
@@ -233,9 +235,16 @@ Runs the full supervisor workflow for a given message.
   "output_format": "json",
   "mode": "auto",
   "session_id": "uuid",
-  "callback_url": null
+  "callback_url": null,
+  "format_hint": "",
+  "is_clarification_resume": false
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `format_hint` | Agent-inferred instruction for planner. Set by gateway from preference inference. |
+| `is_clarification_resume` | Set by gateway when resuming after clarification; orchestrator skips classify and routes to plan. |
 
 **Response:**
 

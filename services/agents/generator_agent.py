@@ -1,6 +1,11 @@
 """Generator agent – creates reports, documents, and structured output."""
 
+import logging
+import time
+
 from services.agents.base_agent import create_react_agent
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a generator agent. You CAN and MUST run Python code using the execute_python tool when needed. "
@@ -27,4 +32,12 @@ _agent = create_react_agent("generator", SYSTEM_PROMPT)
 
 
 async def run(message: str) -> str:
-    return await _agent(message)
+    t0 = time.perf_counter()
+    logger.info("[generator] START | msg_len=%d", len(message))
+    try:
+        result = await _agent(message)
+        logger.info("[generator] DONE | result_len=%d | %.2fs", len(result), time.perf_counter() - t0)
+        return result
+    except Exception as e:
+        logger.exception("[generator] FAILED | %.2fs: %s", time.perf_counter() - t0, e)
+        raise

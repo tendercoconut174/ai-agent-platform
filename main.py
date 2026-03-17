@@ -1,6 +1,7 @@
 """Entry point for ai-agent-platform."""
 
 import argparse
+import logging
 import subprocess
 import sys
 
@@ -8,8 +9,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 def run_gateway(host: str = "0.0.0.0", port: int = 8000) -> None:
+    logger.info("[main] Starting gateway | host=%s | port=%d", host, port)
     subprocess.run(
         [sys.executable, "-m", "uvicorn", "services.gateway.main:app", "--host", host, "--port", str(port)],
         check=True,
@@ -17,6 +21,7 @@ def run_gateway(host: str = "0.0.0.0", port: int = 8000) -> None:
 
 
 def run_orchestrator(host: str = "0.0.0.0", port: int = 8001) -> None:
+    logger.info("[main] Starting orchestrator | host=%s | port=%d", host, port)
     subprocess.run(
         [sys.executable, "-m", "uvicorn", "services.orchestrator.main:app", "--host", host, "--port", str(port)],
         check=True,
@@ -25,6 +30,13 @@ def run_orchestrator(host: str = "0.0.0.0", port: int = 8001) -> None:
 
 def run_migrate() -> None:
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
+
+
+def run_scheduler() -> None:
+    logger.info("[main] Starting scheduler")
+    from services.scheduler.scheduler_service import main as scheduler_main
+
+    scheduler_main()
 
 
 def main() -> None:
@@ -43,7 +55,11 @@ def main() -> None:
 
     subparsers.add_parser("migrate").set_defaults(func=lambda a: run_migrate())
 
+    sched = subparsers.add_parser("scheduler")
+    sched.set_defaults(func=lambda a: run_scheduler())
+
     args = parser.parse_args()
+    logger.info("[main] Running command: %s", args.command)
     args.func(args)
 
 

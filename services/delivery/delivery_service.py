@@ -2,10 +2,16 @@
 
 import base64
 import io
+import logging
 import uuid
 from typing import Any, Optional
 
 from shared.models.schemas import MessageResponse
+
+logger = logging.getLogger(__name__)
+
+# Formats that produce file downloads (derived from available formatters)
+SUPPORTED_FILE_FORMATS = frozenset({"pdf", "xl", "audio"})
 
 
 def _wrap_line(text: str, width: int = 90) -> list[str]:
@@ -85,7 +91,9 @@ def deliver(
     Returns:
         Serialized MessageResponse dict.
     """
+    logger.info("[delivery] deliver | workflow_id=%s | format=%s", workflow_id, output_format)
     if result is None:
+        logger.warning("[delivery] result is None (timeout)")
         return MessageResponse(result="Request timed out", output_format=output_format).model_dump()
 
     text = result.get("result", "")
@@ -102,6 +110,7 @@ def deliver(
                 filename=f"result_{workflow_id or uuid.uuid4()}.pdf",
             ).model_dump()
         except Exception as e:
+            logger.warning("[delivery] PDF conversion failed: %s", e)
             return MessageResponse(result=text, workflow_id=workflow_id, output_format="json").model_dump()
 
     if output_format == "xl":
@@ -116,6 +125,7 @@ def deliver(
                 filename=f"result_{workflow_id or uuid.uuid4()}.xlsx",
             ).model_dump()
         except Exception as e:
+            logger.warning("[delivery] Excel conversion failed: %s", e)
             return MessageResponse(result=text, workflow_id=workflow_id, output_format="json").model_dump()
 
     if output_format == "audio":
@@ -132,7 +142,7 @@ def deliver(
                     content_type=audio_data["content_type"],
                     filename=audio_data["filename"],
                 ).model_dump()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[delivery] Audio conversion failed: %s", e)
 
     return MessageResponse(result=text, workflow_id=workflow_id, output_format=output_format).model_dump()

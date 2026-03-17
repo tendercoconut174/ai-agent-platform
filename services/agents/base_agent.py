@@ -38,7 +38,9 @@ def create_react_agent(agent_type: str, system_prompt: str) -> Callable[[str], A
         )
 
     async def run(message: str) -> str:
+        logger.info("[agent:%s] START | msg_len=%d", agent_type, len(message))
         if not is_llm_available("agents"):
+            logger.warning("[agent:%s] No LLM configured", agent_type)
             return f"[{agent_type}] No LLM API key configured. Message: {message}"
 
         from langchain.agents import create_agent

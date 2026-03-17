@@ -1,5 +1,6 @@
 """Agent registry – maps agent_type to async agent runner."""
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from services.agents import (
@@ -10,6 +11,7 @@ from services.agents import (
     monitor_agent,
     plan_execute_agent,
     research_agent,
+    scheduler_agent,
 )
 
 AgentRunner = Callable[[str], Awaitable[str]]
@@ -22,12 +24,19 @@ AGENT_REGISTRY: dict[str, AgentRunner] = {
     "monitor": monitor_agent.run,
     "chat": chat_agent.run,
     "plan_execute": plan_execute_agent.run,
+    "scheduler": scheduler_agent.run,
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_agent(agent_type: str) -> AgentRunner:
     """Get async agent runner by type. Falls back to research agent."""
-    return AGENT_REGISTRY.get(agent_type, research_agent.run)
+    runner = AGENT_REGISTRY.get(agent_type, research_agent.run)
+    if agent_type not in AGENT_REGISTRY:
+        logger.debug("[registry] Unknown agent_type=%s, falling back to research", agent_type)
+    return runner
 
 
 def list_agents() -> list[str]:

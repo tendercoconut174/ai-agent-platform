@@ -10,19 +10,12 @@ from services.orchestrator.supervisor.state import ExecutionPlan, PlanStep, Work
 
 logger = logging.getLogger(__name__)
 
-FORMAT_HINTS = {
-    "xl": "Format the final output as a markdown table with | separators.",
-    "pdf": "Format the final output with clear headings, structured lists, and readable paragraphs.",
-    "audio": "Format the final output as a concise spoken summary.",
-    "json": "",
-}
-
 
 class PlanStepSchema(BaseModel):
     """Schema for a single step the LLM returns."""
 
     node_id: str = Field(description="Unique step ID like step_1, step_2")
-    agent_type: Literal["research", "analysis", "generator", "code", "monitor", "chat", "plan_execute"] = Field(
+    agent_type: Literal["research", "analysis", "generator", "code", "monitor", "chat", "plan_execute", "scheduler"] = Field(
         description=(
             "research: web search, data gathering from the internet. "
             "analysis: summarize, compare, extract patterns from data. "
@@ -30,7 +23,8 @@ class PlanStepSchema(BaseModel):
             "code: run calculations, data processing, number crunching. "
             "monitor: long-running observation (only for monitoring tasks). "
             "chat: casual conversation. "
-            "plan_execute: complex multi-step tasks – plans upfront then executes (use for research+analysis+format)."
+            "plan_execute: complex multi-step tasks – plans upfront then executes (use for research+analysis+format). "
+            "scheduler: schedule tasks for future execution (remind, run later, daily, hourly, weekly, every X minutes)."
         )
     )
     message: str = Field(description="What this step should do -- a clear instruction for the agent")
@@ -55,11 +49,12 @@ PLAN_SYSTEM = (
     "- analysis: summarize, compare, extract patterns (tools: web_search, execute_python, read_file)\n"
     "- generator: create reports, documents, structured output, SEND EMAIL (tools: web_search, write_file, read_file, execute_python, send_email)\n"
     "- code: write and execute Python code for calculations/data processing (tools: execute_python, read_file, write_file)\n"
-    "- monitor: web search and scrape for tracking tasks (tools: web_search, scrape_url)\n"
+    "- monitor: web search and scrape for tracking tasks – ONE-TIME observation (tools: web_search, scrape_url). "
+    "Do NOT use monitor for 'every X seconds/minutes' or 'talk to me every...' – those use scheduler.\n"
     "- chat: casual conversation (no tools)\n"
-    "- plan_execute: for complex tasks needing research+analysis+format – plans steps then executes each\n\n"
+    "- plan_execute: for complex tasks needing research+analysis+format – plans steps then executes each\n"
+    "- scheduler: schedule tasks for future execution (remind, run later, daily, hourly, weekly, every X minutes).\n\n"
     "Platform LIMITATIONS (capabilities NOT available):\n"
-    "- NO scheduling/cron -- all tasks execute immediately in a single request, cannot run for hours or on intervals\n"
     "- NO file upload to external services -- cannot post to social media, upload to cloud storage, etc.\n"
     "- NO database access -- cannot query or write to external databases\n"
     "- NO browser interaction -- cannot fill forms, click buttons, or log into websites\n"
@@ -68,9 +63,11 @@ PLAN_SYSTEM = (
     "- Use the fewest steps necessary. A single-step plan is fine for simple goals.\n"
     "- Set dependencies correctly: a step that needs results from step_1 should list ['step_1'] in dependencies.\n"
     "- Steps with no dependencies can run in parallel.\n"
-    "- If the user asks for something the platform CANNOT do (e.g. send email, run for 1 hour), "
-    "plan only the parts that ARE possible (e.g. research + analysis) and include a note in the last step "
-    "that the unsupported parts (email, scheduling) are not yet available.\n"
+    "- If the user asks to schedule, remind, run later, run daily, run every hour, run every X minutes, "
+    "'talk to me every...', 'notify me every...', use scheduler as the first (and usually only) step. "
+    "Never use monitor for recurring tasks – monitor runs once and stops.\n"
+    "- If the user asks for something the platform CANNOT do (e.g. upload to cloud, run for 1 hour), "
+    "plan only the parts that ARE possible and include a note about unsupported parts.\n"
     "- Each step should complete in under 60 seconds. Break large tasks into smaller pieces.\n"
     "- Do NOT use 'chat' for tasks that need tools or research.\n"
     "- When conversation context is provided, the goal may be a follow-up (e.g. 'can you write one with python'). "
@@ -100,6 +97,7 @@ def _format_conversation_for_plan(history: list[dict[str, str]], max_chars: int 
 async def _plan_with_llm(
     goal: str,
     output_format: str = "json",
+    format_hint: str = "",
     iteration: int = 0,
     previous_feedback: str = "",
     conversation_history: list[dict[str, str]] | None = None,
@@ -109,7 +107,7 @@ async def _plan_with_llm(
     llm = get_llm("planner", temperature=0)
     structured_llm = llm.with_structured_output(PlanOutput)
 
-    format_hint = FORMAT_HINTS.get(output_format, "")
+    format_hint = ""  # Set from state (agent-inferred via preference_inference)
     user_msg = goal
     if conversation_history:
         ctx = _format_conversation_for_plan(conversation_history)
@@ -169,6 +167,7 @@ async def plan(state: WorkflowState) -> WorkflowState:
     t0 = time.perf_counter()
     goal = state.get("goal", "")
     output_format = state.get("output_format", "json")
+    format_hint = state.get("format_hint", "")
     iteration = state.get("iteration_count", 0)
     logger.info("[plan] START | iteration=%d | format=%s | goal=%s", iteration, output_format, goal[:120])
 
@@ -179,7 +178,7 @@ async def plan(state: WorkflowState) -> WorkflowState:
 
     if is_llm_available("planner"):
         execution_plan = await _plan_with_llm(
-            goal, output_format, iteration, previous_feedback, conversation_history
+            goal, output_format, format_hint, iteration, previous_feedback, conversation_history
         )
     else:
         execution_plan = ExecutionPlan(

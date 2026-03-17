@@ -2,9 +2,12 @@
 
 import contextlib
 import io
+import logging
 import multiprocessing
 import traceback
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _run_in_sandbox(code: str, result_queue: multiprocessing.Queue) -> None:
@@ -58,12 +61,14 @@ def execute_python(code: str, timeout: int = 30) -> dict[str, Any]:
     Returns:
         Dict with stdout, stderr, success, and error fields.
     """
+    logger.info("[code_executor] execute_python | code_len=%d | timeout=%d", len(code), timeout)
     result_queue: multiprocessing.Queue = multiprocessing.Queue()
     proc = multiprocessing.Process(target=_run_in_sandbox, args=(code, result_queue))
     proc.start()
     proc.join(timeout=timeout)
 
     if proc.is_alive():
+        logger.warning("[code_executor] Execution timed out after %ds", timeout)
         proc.kill()
         proc.join(timeout=5)
         return {
@@ -75,8 +80,11 @@ def execute_python(code: str, timeout: int = 30) -> dict[str, Any]:
         }
 
     if not result_queue.empty():
-        return result_queue.get_nowait()
+        out = result_queue.get_nowait()
+        logger.info("[code_executor] DONE | success=%s", out.get("success", False))
+        return out
 
+    logger.warning("[code_executor] Process exited with no output")
     return {
         "stdout": "",
         "stderr": "",

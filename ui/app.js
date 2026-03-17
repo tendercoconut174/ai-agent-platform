@@ -4,7 +4,12 @@ const SESSION_KEY = "ai-agent-platform-session-id";
 let abortController = null;
 
 function getApiUrl() {
-  return document.getElementById("api-url").value || "http://localhost:8000";
+  try {
+    const el = document.getElementById("api-url");
+    return (el && el.value) ? el.value : "http://localhost:8000";
+  } catch (_) {
+    return "http://localhost:8000";
+  }
 }
 
 function getSessionId() {
@@ -147,6 +152,7 @@ async function sendMessage(sourceInput = "main") {
   const clarificationInput = document.getElementById("clarification-input");
   const input = sourceInput === "clarification" ? clarificationInput : mainInput;
   const sendBtn = document.getElementById("send-btn");
+  if (!input || !sendBtn) return;
   let message = input.value.trim();
   if (sourceInput === "code_approval") {
     message = "approved";
@@ -154,13 +160,15 @@ async function sendMessage(sourceInput = "main") {
 
   const apiUrl = getApiUrl();
   const sessionId = getSessionId();
-  const outputFormat = document.getElementById("output-format").value;
-  const workflowId = document.getElementById("workflow-id").textContent;
+  const workflowEl = document.getElementById("workflow-id");
+  const workflowId = workflowEl?.textContent ?? "—";
   const wfId = workflowId === "—" ? null : workflowId;
-  const streamMode = document.getElementById("stream-mode").checked;
+  const streamEl = document.getElementById("stream-mode");
+  const streamMode = streamEl ? streamEl.checked : true;
 
   sendBtn.disabled = true;
-  document.getElementById("clarification-send-btn").disabled = true;
+  const clarificationSendBtn = document.getElementById("clarification-send-btn");
+  if (clarificationSendBtn) clarificationSendBtn.disabled = true;
   input.value = "";
   const approvalIdToSend = sourceInput === "code_approval" ? pendingCodeApprovalId : null;
   if (sourceInput === "clarification") hideClarificationBanner();
@@ -170,13 +178,10 @@ async function sendMessage(sourceInput = "main") {
   renderSteps([]);
 
   abortController = new AbortController();
-  const requireCodeApproval = document.getElementById("require-code-approval").checked;
   const payload = {
     message,
-    output_format: outputFormat,
     session_id: sessionId || null,
     workflow_id: wfId || null,
-    require_code_approval: requireCodeApproval,
   };
   if (approvalIdToSend) {
     payload.code_approval_id = approvalIdToSend;
@@ -185,9 +190,9 @@ async function sendMessage(sourceInput = "main") {
   try {
     showStopButton();
     if (streamMode) {
-      await sendMessageStream(apiUrl, payload, sessionId, outputFormat, sendBtn);
+      await sendMessageStream(apiUrl, payload, sessionId, sendBtn);
     } else {
-      await sendMessageSync(apiUrl, payload, sessionId, outputFormat, sendBtn);
+      await sendMessageSync(apiUrl, payload, sessionId, sendBtn);
     }
   } catch (err) {
     if (err.name === "AbortError") {
@@ -201,13 +206,14 @@ async function sendMessage(sourceInput = "main") {
     }
   } finally {
     sendBtn.disabled = false;
-    document.getElementById("clarification-send-btn").disabled = false;
+    const clarificationSendBtn = document.getElementById("clarification-send-btn");
+    if (clarificationSendBtn) clarificationSendBtn.disabled = false;
     hideStopButton();
     abortController = null;
   }
 }
 
-async function sendMessageStream(apiUrl, payload, sessionId, outputFormat, sendBtn) {
+async function sendMessageStream(apiUrl, payload, sessionId, sendBtn) {
   addLoadingMessage();
   let resultEl = null;
   const steps = [];
@@ -286,7 +292,8 @@ async function sendMessageStream(apiUrl, payload, sessionId, outputFormat, sendB
               setStatus("Clarification needed");
             } else if (delivery.content_base64 && delivery.content_type) {
               const blob = base64ToBlob(delivery.content_base64, delivery.content_type);
-              const ext = outputFormat === "xl" ? "xlsx" : outputFormat === "pdf" ? "pdf" : "mp3";
+              const fmt = delivery.output_format || "json";
+              const ext = fmt === "xl" ? "xlsx" : fmt === "pdf" ? "pdf" : fmt === "audio" ? "mp3" : "bin";
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
@@ -312,7 +319,7 @@ async function sendMessageStream(apiUrl, payload, sessionId, outputFormat, sendB
   }
 }
 
-async function sendMessageSync(apiUrl, payload, sessionId, outputFormat, sendBtn) {
+async function sendMessageSync(apiUrl, payload, sessionId, sendBtn) {
   addLoadingMessage();
 
   const res = await fetch(`${apiUrl}/message`, {
@@ -346,7 +353,8 @@ async function sendMessageSync(apiUrl, payload, sessionId, outputFormat, sendBtn
     setStatus("Clarification needed");
   } else if (data.content_base64 && data.content_type) {
     const blob = base64ToBlob(data.content_base64, data.content_type);
-    const ext = outputFormat === "xl" ? "xlsx" : outputFormat === "pdf" ? "pdf" : "mp3";
+    const fmt = data.output_format || "json";
+    const ext = fmt === "xl" ? "xlsx" : fmt === "pdf" ? "pdf" : fmt === "audio" ? "mp3" : "bin";
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -374,7 +382,8 @@ function base64ToBlob(base64, mimeType) {
 
 function init() {
   const apiUrl = localStorage.getItem(API_URL_KEY) || "http://localhost:8000";
-  document.getElementById("api-url").value = apiUrl;
+  const apiUrlEl = document.getElementById("api-url");
+  if (apiUrlEl) apiUrlEl.value = apiUrl;
   document.getElementById("api-url").addEventListener("change", (e) => {
     localStorage.setItem(API_URL_KEY, e.target.value);
   });

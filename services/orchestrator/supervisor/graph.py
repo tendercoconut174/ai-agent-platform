@@ -54,13 +54,8 @@ async def _chat_respond(state: WorkflowState) -> WorkflowState:
 
 
 def _route_after_classify(state: WorkflowState) -> str:
-    """Route based on classified intent."""
-    intent = state.get("intent", "simple")
-    if intent == "casual":
-        return "chat_respond"
-    if intent == "needs_clarification":
-        return "ask_user"
-    return "plan"
+    """Route based on agent-decided next_node (no hardcoded intent mapping)."""
+    return state.get("next_node", "plan")
 
 
 def _route_after_evaluate(state: WorkflowState) -> str:
@@ -137,6 +132,8 @@ async def run_workflow(
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     require_code_approval: bool = False,
+    format_hint: str = "",
+    is_clarification_resume: bool = False,
 ) -> WorkflowState:
     """Run the full supervisor workflow asynchronously.
 
@@ -165,11 +162,14 @@ async def run_workflow(
     initial_state: WorkflowState = {
         "goal": goal,
         "output_format": output_format,
+        "format_hint": format_hint,
         "session_id": session_id,
         "workflow_id": wf_id,
         "callback_url": callback_url,
         "conversation_history": history,
+        "is_clarification_resume": is_clarification_resume,
         "intent": "",
+        "next_node": "",
         "plan": None,
         "step_results": [],
         "current_step_index": 0,
@@ -199,6 +199,8 @@ async def run_workflow_stream(
     callback_url: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     require_code_approval: bool = False,
+    format_hint: str = "",
+    is_clarification_resume: bool = False,
 ) -> AsyncGenerator[dict, None]:
     """Run workflow and stream progress events (node transitions + per-step updates)."""
     t0 = time.perf_counter()
@@ -214,11 +216,14 @@ async def run_workflow_stream(
     initial_state: WorkflowState = {
         "goal": goal,
         "output_format": output_format,
+        "format_hint": format_hint,
         "session_id": session_id,
         "workflow_id": wf_id,
         "callback_url": callback_url,
         "conversation_history": history,
+        "is_clarification_resume": is_clarification_resume,
         "intent": "",
+        "next_node": "",
         "plan": None,
         "step_results": [],
         "current_step_index": 0,

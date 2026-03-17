@@ -15,11 +15,11 @@ Gateway (FastAPI)
   ▼
 Orchestrator (FastAPI)
   └── Supervisor (LangGraph StateGraph)
-        ├── classify  ─── casual? ──► chat_respond ──► deliver ──► END
+        ├── classify  ─── next_node ──► chat_respond / ask_user / plan
         │                    │
-        │                    └── task? ──► plan ──► execute ──► evaluate ──┐
-        │                                   ▲                              │
-        │                                   └── goal not achieved ─────────┘
+        │                    └── plan ──► execute ──► evaluate ──┐
+        │                                   ▲                     │
+        │                                   └── goal not achieved ─┘
         │                                          goal achieved ──► deliver ──► END
         │
         └── Agent Pool (research, analysis, generator, code, monitor, chat)
@@ -37,15 +37,16 @@ User
 - **Fully async** -- end-to-end async from HTTP endpoints through LangGraph to LLM calls (`ainvoke`)
 - **Provider-agnostic LLM** -- swap between OpenAI, Anthropic, Google Gemini, Ollama, Groq via env vars
 - **Goal-oriented execution** -- plans, executes, evaluates, and replans until the goal is achieved
-- **Intent classification** -- casual chat bypasses planning; complex tasks get full DAG execution
+- **Agent-driven routing** -- classify returns `next_node` (chat_respond, ask_user, plan); no hardcoded intent mapping
 - **Async parallel execution** -- independent plan steps run concurrently via `asyncio.gather()`
 - **Multi-modal input** -- text, voice (Whisper transcription), images (GPT-4V), file attachments (PDF, Excel, CSV, TXT)
 - **Multi-format output** -- JSON, PDF (fpdf2), Excel (openpyxl), Audio (TTS)
 - **Session continuity** -- PostgreSQL-backed conversation history with in-memory fallback
 - **MCP tools** -- agents use structured, discoverable tools rather than calling APIs directly
-- **Format-aware planning** -- the planner injects output format instructions so agents produce data suitable for the requested format
+- **Preference inference** -- LLM infers output_format, require_code_approval, format_hint, and clean_message from the user message (no regex or hardcoded patterns)
 - **Human-in-the-loop** -- when a request is vague or ambiguous, the supervisor asks for clarification; user can resume with `workflow_id`
 - **Code approval** -- when enabled (`require_code_approval: true`), agents pause for user approval before running Python code; user reviews and approves via UI or API
+- **Task scheduling** -- schedule tasks for future execution (remind, run later, daily, hourly, weekly); scheduler service runs due tasks via orchestrator
 
 ## Prerequisites
 
@@ -68,9 +69,12 @@ uv run python main.py orchestrator
 
 # Terminal 2 -- Gateway (port 8000)
 uv run python main.py gateway
+
+# Terminal 3 (optional) -- Scheduler (runs due tasks; requires PostgreSQL)
+uv run python main.py scheduler
 ```
 
-PostgreSQL is optional. Without it, sessions are stored in-memory (lost on restart).
+PostgreSQL is optional for gateway/orchestrator (sessions fall back to in-memory). The scheduler requires PostgreSQL to store scheduled tasks.
 
 ## Test UI
 
@@ -106,7 +110,7 @@ curl -X POST http://localhost:8000/message \
   -d '{"message": "research ICC T20 world cup winners"}' \
   --output result.pdf
 
-# Excel output (auto-detected from message)
+# Excel output (LLM-inferred from message)
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"message": "give me excel of top 10 tech companies by revenue"}'  \
@@ -116,6 +120,11 @@ curl -X POST http://localhost:8000/message \
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"message": "tell me more", "session_id": "<session_id_from_previous>"}'
+
+# Schedule a task (requires scheduler service + PostgreSQL)
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "schedule a task to research top tech news tomorrow at 9am"}'
 ```
 
 ### POST /message/upload -- Multipart (voice, image, files)
@@ -189,7 +198,8 @@ Stream workflow progress in real time. Same request body as `POST /message`. Ret
 | `GROQ_API_KEY` | -- | API key for Groq |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (for local models) |
 | `DATABASE_URL` | `postgresql://dev:dev@localhost:5432/agent_platform` | PostgreSQL connection URL |
-| `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway) |
+| `ORCHESTRATOR_URL` | `http://localhost:8001` | Orchestrator service URL (used by gateway and scheduler) |
+| `SCHEDULER_INTERVAL_SECONDS` | `60` | How often the scheduler polls for due tasks |
 | `AGENT_TIMEOUT_SECONDS` | `180` | Max seconds per agent step (increase for complex analysis) |
 | `FILE_WORKSPACE` | `/tmp/agent_workspace` | Workspace directory for file_io tool |
 | `SMTP_HOST` | `smtp.gmail.com` | SMTP server for email sending |
@@ -248,8 +258,8 @@ services/
       graph.py                       #     StateGraph with ainvoke: classify → plan → execute → evaluate → deliver
       state.py                       #     WorkflowState, PlanStep, ExecutionPlan, StepResult
       nodes/
-        classify.py                  #     Structured LLM intent classification (casual/simple/complex/monitor)
-        plan.py                      #     Structured LLM DAG planning with format hints
+        classify.py                  #     LLM returns intent + next_node (agent-decided routing)
+        plan.py                      #     Structured LLM DAG planning; format_hint from preference inference
         execute.py                   #     Async step execution with asyncio.gather for parallelism
         evaluate.py                  #     Structured LLM goal evaluation with replan loop
         deliver.py                   #     Async final result formatting
@@ -267,6 +277,7 @@ services/
     formatters/audio.py              #   OpenAI TTS conversion
 shared/
   llm.py                             # Centralized LLM factory (provider-agnostic get_llm)
+  preference_inference.py            # LLM infers output_format, require_code_approval, format_hint, clean_message
   models/                            # Data models
     base.py                          #   SQLAlchemy DeclarativeBase + TimestampMixin
     schemas.py                       #   Pydantic API schemas
@@ -308,17 +319,34 @@ docker compose up -d
 docker compose up -d postgres
 ```
 
+## Scheduler Troubleshooting
+
+The scheduler runs due tasks by calling the orchestrator. For it to work:
+
+1. **PostgreSQL must be running** – The scheduler stores tasks in `scheduled_tasks`. Run `uv run python main.py migrate` after starting Postgres.
+2. **Scheduler service must be running** – `uv run python main.py scheduler` (or `docker compose up scheduler`).
+3. **Orchestrator must be reachable** – Set `ORCHESTRATOR_URL` (default `http://localhost:8001`). In Docker, use `http://orchestrator:8001`.
+4. **Poll interval** – Default 60s. Set `SCHEDULER_INTERVAL_SECONDS=10` for faster testing.
+
+To verify:
+- Ask "what's scheduled?" in the UI – the scheduler agent lists pending tasks.
+- Check scheduler logs – startup shows "DB OK | N pending tasks" or "DB unavailable".
+- For "in X minutes" tasks, wait at least X minutes plus one poll interval.
+
+**"Every X seconds"** – Sub-minute intervals are not supported. "Talk to me every 5 seconds" is rounded to **every 1 minute**. For "every 1 minute" to run promptly, set `SCHEDULER_INTERVAL_SECONDS=10` or `30`.
+
 ## Supervisor Flow Detail
 
 All nodes are async and invoked via `await graph.ainvoke()`:
 
-1. **Classify** -- Determines intent using `await llm.ainvoke()` or heuristics: `casual`, `simple`, `complex`, or `monitor`
+1. **Classify** -- LLM determines intent and `next_node` (chat_respond, ask_user, or plan). When `is_clarification_resume`, skips classify and routes to plan.
 2. **Chat Respond** -- For casual intent, responds directly without planning via async LLM chat
-3. **Plan** -- LLM generates a DAG of `PlanStep`s with agent types, messages, and dependencies
-4. **Execute** -- Dispatches steps to async agents; independent steps run concurrently via `asyncio.gather()`
-5. **Evaluate** -- LLM evaluates whether the result achieves the user's goal
-6. **Replan** -- If the goal is not achieved and max iterations not reached, loops back to Plan
-7. **Deliver** -- Formats the final result; file conversion (PDF/Excel/Audio) handled by the Delivery Service
+3. **Ask User** -- For needs_clarification, generates a clarifying question and pauses the workflow
+4. **Plan** -- LLM generates a DAG of `PlanStep`s; uses agent-inferred `format_hint` for output instructions
+5. **Execute** -- Dispatches steps to async agents; code-approval agents derived from `TOOL_REGISTRY`; independent steps run concurrently
+6. **Evaluate** -- LLM always evaluates whether the result achieves the goal (intent passed as context)
+7. **Replan** -- If the goal is not achieved and max iterations not reached, loops back to Plan
+8. **Deliver** -- Formats the final result; file conversion (PDF/Excel/Audio) handled by the Delivery Service
 
 ## License
 

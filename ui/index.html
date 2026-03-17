@@ -25,19 +25,8 @@
             <input type="checkbox" id="stream-mode" checked> Stream
           </label>
         </span>
-        <span class="meta-item">
-          <label>
-            <input type="checkbox" id="require-code-approval" title="When checked: pause and ask before running code. When unchecked: code runs automatically (Cursor-style)."> Require approval
-          </label>
-        </span>
-        <span class="meta-item">
-          <label>Format:</label>
-          <select id="output-format">
-            <option value="json">JSON</option>
-            <option value="pdf">PDF</option>
-            <option value="xl">Excel</option>
-            <option value="audio">Audio</option>
-          </select>
+        <span class="meta-item" title="Format and approval are inferred from your message (e.g. 'give me pdf', 'approve before running')">
+          <small>Format & approval: LLM-inferred</small>
         </span>
         <span class="meta-item">
           <label>API URL:</label>
@@ -68,7 +57,7 @@
           </div>
         </div>
         <div class="input-area">
-          <textarea id="message-input" placeholder="Type your message... (e.g. research top tech companies)" rows="2"></textarea>
+          <textarea id="message-input" placeholder="Type your message... (e.g. research top tech companies, give me a pdf, excel report)" rows="2"></textarea>
           <button id="send-btn" class="btn-primary">Send</button>
           <button id="stop-btn" class="btn-danger hidden" title="Stop request" type="button">Stop</button>
         </div>
@@ -87,6 +76,6 @@
     </main>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

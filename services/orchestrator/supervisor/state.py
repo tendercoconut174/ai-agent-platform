@@ -38,13 +38,16 @@ class WorkflowState(TypedDict, total=False):
     # Input
     goal: str
     output_format: str
+    format_hint: str  # Agent-inferred instruction for planner
     session_id: Optional[str]
     workflow_id: Optional[str]
     callback_url: Optional[str]
     conversation_history: list[dict[str, str]]
+    is_clarification_resume: bool
 
-    # Classification
+    # Classification (agent-decided)
     intent: str  # casual | simple | complex | monitor
+    next_node: str  # chat_respond | ask_user | plan
 
     # Planning
     plan: Optional[ExecutionPlan]

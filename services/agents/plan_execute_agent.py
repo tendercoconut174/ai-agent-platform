@@ -5,6 +5,7 @@ Uses a planner LLM to create steps, then an executor (ReAct) for each step.
 """
 
 import logging
+import time
 from pydantic import BaseModel, Field
 
 from services.agents.base_agent import create_react_agent
@@ -48,7 +49,11 @@ _executor = create_react_agent("analysis", (
 
 async def run(message: str) -> str:
     """Plan steps, then execute each, passing context forward."""
+    t0 = time.perf_counter()
+    logger.info("[plan_execute] START | msg_len=%d", len(message))
+
     if not is_llm_available("planner"):
+        logger.warning("[plan_execute] No LLM configured")
         return "[plan_execute] No LLM configured. Use a different agent."
 
     llm = get_llm("planner", temperature=0)
@@ -60,6 +65,7 @@ async def run(message: str) -> str:
     ])
 
     if not plan.steps:
+        logger.warning("[plan_execute] Planner returned no steps")
         return "[plan_execute] Planner returned no steps."
 
     logger.info("[plan_execute] Plan has %d steps", len(plan.steps))
@@ -72,7 +78,10 @@ async def run(message: str) -> str:
         if context_parts:
             step_msg = f"Previous results:\n" + "\n\n".join(context_parts) + "\n\n" + step_msg
 
+        logger.info("[plan_execute] Executing step %s/%s", i + 1, len(plan.steps))
         result = await _executor(step_msg)
         context_parts.append(f"[{step.step_id}]: {result}")
 
-    return context_parts[-1] if context_parts else "[plan_execute] No output."
+    final = context_parts[-1] if context_parts else "[plan_execute] No output."
+    logger.info("[plan_execute] DONE | result_len=%d | %.2fs", len(final), time.perf_counter() - t0)
+    return final

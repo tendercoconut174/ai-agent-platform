@@ -1,7 +1,10 @@
 """Media processing tool – audio transcription (Whisper), TTS, image description."""
 
+import logging
 import os
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def transcribe_audio(file_path: str) -> dict[str, Any]:
@@ -13,8 +16,10 @@ def transcribe_audio(file_path: str) -> dict[str, Any]:
     Returns:
         Dict with text, language, and duration.
     """
+    logger.info("[media_processor] transcribe_audio | file=%s", file_path)
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
+        logger.warning("[media_processor] OPENAI_API_KEY not set")
         return {"text": "", "error": "OPENAI_API_KEY not set"}
 
     from openai import OpenAI
@@ -22,6 +27,7 @@ def transcribe_audio(file_path: str) -> dict[str, Any]:
     client = OpenAI(api_key=api_key)
     with open(file_path, "rb") as f:
         result = client.audio.transcriptions.create(model="whisper-1", file=f)
+    logger.info("[media_processor] transcribe_audio DONE | text_len=%d", len(result.text))
     return {"text": result.text, "error": None}
 
 
@@ -58,8 +64,10 @@ def describe_image(file_path: str) -> dict[str, Any]:
     Returns:
         Dict with description and error.
     """
+    logger.info("[media_processor] describe_image | file=%s", file_path)
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
+        logger.warning("[media_processor] OPENAI_API_KEY not set")
         return {"description": "", "error": "OPENAI_API_KEY not set"}
 
     import base64
@@ -84,4 +92,6 @@ def describe_image(file_path: str) -> dict[str, Any]:
         }],
         max_tokens=1000,
     )
-    return {"description": response.choices[0].message.content, "error": None}
+    desc = response.choices[0].message.content
+    logger.info("[media_processor] describe_image DONE | desc_len=%d", len(desc or ""))
+    return {"description": desc, "error": None}

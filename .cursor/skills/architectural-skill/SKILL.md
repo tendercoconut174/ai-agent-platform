@@ -81,10 +81,9 @@ User
 
 ## 3. Agent Pool (`services/agents/`)
 
-- Six specialized agents: research, analysis, generator, code, monitor, chat
-- All built via `create_react_agent` factory (LangChain ReAct + OpenAI)
-- Each agent has a system prompt and a subset of MCP tools
-- Registered in `services/agents/registry.py`
+- **CrewAI sub-agents** (research, analysis, generator, code, monitor): Implemented as CrewAI crews in `crewai_agents.py`. Each crew has one agent with role, goal, backstory. MCP tools (LangChain `@tool`) are converted via `Tool.from_langchain()` before passing to CrewAI.
+- **Special agents**: chat (simple LLM), plan_execute (planner + CrewAI analysis executor), scheduler (scheduler-specific logic)
+- Registered in `services/agents/registry.py`; registry maps agent types to async runners
 
 ## 4. MCP Tools (`shared/mcp/`)
 
@@ -134,10 +133,9 @@ services/
       state.py                       #   WorkflowState, PlanStep, ExecutionPlan
       nodes/                         #   classify, plan, execute, evaluate, deliver
   agents/                            # Agent pool
-    base_agent.py                    #   ReAct agent factory
+    crewai_agents.py                 #   CrewAI crews (research, analysis, generator, code, monitor)
     registry.py                      #   Agent type → runner
-    research_agent.py, analysis_agent.py, generator_agent.py,
-    code_agent.py, monitor_agent.py, chat_agent.py
+    chat_agent.py, plan_execute_agent.py, scheduler_agent.py
   delivery/                          # Output formatting
     delivery_service.py              #   PDF, Excel, Audio, JSON
     formatters/audio.py              #   TTS conversion
@@ -156,7 +154,8 @@ database/                            # SQLAlchemy connection + Alembic
 - OpenAI for all LLM calls (agents, planner, classifier, evaluator)
 - Pydantic for schemas
 - LangGraph for supervisor workflow
-- LangChain for agent creation
+- CrewAI for sub-agents (research, analysis, generator, code, monitor)
+- LangChain for tool wrappers (MCP tools); converted to CrewAI via `Tool.from_langchain()`
 - MCP for tool interfaces
 - PostgreSQL for persistence
 - Docker Compose for service runtime

@@ -31,8 +31,9 @@ All generated code must follow the standards defined in this document.
 ## Frameworks
 
 - **FastAPI** -- async API services
-- **LangChain** -- agent creation (`langchain.agents.create_agent`)
+- **CrewAI** -- sub-agents (research, analysis, generator, code, monitor) as crews inside LangGraph
 - **LangGraph** -- supervisor orchestration (`StateGraph` with async `ainvoke`)
+- **LangChain** -- tool wrappers (`@tool`); converted to CrewAI via `Tool.from_langchain()`
 - **LLM providers** -- provider-agnostic via `shared/llm.py` factory (OpenAI, Anthropic, Google, Ollama, Groq)
 - **Pydantic v2** -- schema validation and models
 - **SQLAlchemy 2.0** -- ORM (declarative mapped columns)
@@ -49,7 +50,7 @@ All generated code must follow the standards defined in this document.
 ### Rules
 
 - Do NOT introduce alternative LLM frameworks (use LangChain's BaseChatModel interface).
-- Do NOT replace LangGraph or LangChain.
+- Do NOT replace LangGraph, CrewAI, or LangChain tool layer.
 - Do NOT hardcode `ChatOpenAI` -- always use `get_llm()` from `shared/llm.py`.
 - Do NOT introduce unnecessary libraries.
 - Prefer Python standard library where possible.
@@ -164,17 +165,21 @@ if is_llm_available("my_component"):
 
 Never import `ChatOpenAI` directly. The `get_llm()` factory reads `LLM_PROVIDER` / `LLM_MODEL` env vars and supports per-component overrides like `LLM_PROVIDER__AGENTS`.
 
-## Agent creation (async)
+## Agent creation (CrewAI sub-agents)
+
+Sub-agents (research, analysis, generator, code, monitor) are CrewAI crews. Add to `_CREW_DEFS` in `crewai_agents.py`:
 
 ```python
-from services.agents.base_agent import create_react_agent
-
-SYSTEM_PROMPT = "You are a ..."
-_agent = create_react_agent("agent_type", SYSTEM_PROMPT)
-
-async def run(message: str) -> str:
-    return await _agent(message)
+# services/agents/crewai_agents.py
+_CREW_DEFS["my_agent"] = (
+    "Role Name",
+    "Goal with tool hints (web_search, execute_python, etc.)",
+    "Backstory: expert context.",
+)
+# Add run_my_agent() and register in registry.py
 ```
+
+Tools from `TOOL_REGISTRY` are converted via `Tool.from_langchain()` before passing to CrewAI Agent. For non-CrewAI agents (chat, scheduler), use their existing patterns.
 
 ## LangGraph nodes (async)
 

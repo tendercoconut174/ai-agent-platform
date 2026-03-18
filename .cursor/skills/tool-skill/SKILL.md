@@ -34,7 +34,7 @@ All tools follow **Model Context Protocol (MCP)** principles:
 - Tools return structured output (dicts)
 - Tools are stateless
 
-Agents interact with tools through LangChain `@tool` wrappers. Agents must not call external APIs directly.
+Agents interact with tools through LangChain `@tool` wrappers. **CrewAI sub-agents** receive tools converted via `Tool.from_langchain()` in `crewai_agents.py`; the raw LangChain tools come from `TOOL_REGISTRY`. Agents must not call external APIs directly.
 
 ---
 

@@ -19,7 +19,14 @@ Use this skill when generating:
 
 # Agent Technology
 
-All agents use **LangChain ReAct agents** (`langchain.agents.create_agent`) backed by **OpenAI models** (default `gpt-4o-mini`). Each agent is created via the shared factory in `services/agents/base_agent.py`.
+**Sub-agents** (research, analysis, generator, code, monitor) use **CrewAI crews** as sub-agents inside LangGraph. Each is implemented as a single-agent CrewAI crew with role, goal, and backstory. Tools are LangChain `@tool` wrappers converted to CrewAI via `Tool.from_langchain()` in `services/agents/crewai_agents.py`.
+
+**Special agents** (chat, plan_execute, scheduler) use their original implementations:
+- **chat** — simple LLM chat (no tools)
+- **plan_execute** — planner LLM + CrewAI analysis crew as executor
+- **scheduler** — scheduler-specific logic (no CrewAI)
+
+All LLM calls use the shared factory in `shared/llm.py` (OpenAI default `gpt-4o-mini`).
 
 ---
 
@@ -50,29 +57,27 @@ Agents must never contain API logic, infrastructure code, or database access.
 
 # Agent Implementation Standard
 
-All agents follow this pattern:
+**CrewAI sub-agents** (research, analysis, generator, code, monitor): Add a new entry to `_CREW_DEFS` in `services/agents/crewai_agents.py` with role, goal, backstory. The registry maps agent types to `run_research`, `run_analysis`, etc. Tools come from `TOOL_REGISTRY` and are converted via `Tool.from_langchain()`.
 
 ```python
-# services/agents/my_agent.py
-from services.agents.base_agent import create_react_agent
-
-SYSTEM_PROMPT = (
-    "You are a specialist in ...\n\n"
-    "Guidelines:\n"
-    "- Use tool_name to ...\n"
-    "- Produce structured output\n"
-)
-
-_agent = create_react_agent("my_agent", SYSTEM_PROMPT)
-
-def run(message: str) -> str:
-    return _agent(message)
+# services/agents/crewai_agents.py
+_CREW_DEFS = {
+    "my_agent": (
+        "Role Name",
+        "Goal: what the agent achieves. Mention tools: web_search, execute_python, etc.",
+        "Backstory: expert context and behavior.",
+    ),
+}
+# Add run_my_agent() and register in AGENT_REGISTRY
 ```
 
-After creating the agent file:
+**Non-CrewAI agents** (chat, scheduler): Use their existing patterns (chat_agent.py, scheduler_agent.py).
 
-1. Register it in `services/agents/registry.py`
-2. Assign tools in `shared/mcp/server.py` `TOOL_REGISTRY`
+After adding a CrewAI agent:
+
+1. Add to `_CREW_DEFS` and create `run_<type>` in `crewai_agents.py`
+2. Register in `services/agents/registry.py` `AGENT_REGISTRY`
+3. Assign tools in `shared/mcp/server.py` `TOOL_REGISTRY` (and `get_tools_for_agent`)
 
 Agents with `tool_execute_python` in their tool set are automatically treated as code-approval agents when `require_code_approval` is true (derived from `TOOL_REGISTRY`, not hardcoded).
 
@@ -80,14 +85,16 @@ Agents with `tool_execute_python` in their tool set are automatically treated as
 
 # Current Agent Pool
 
-| Agent | File | Tools | Purpose |
-|-------|------|-------|---------|
-| research | `research_agent.py` | web_search, scrape_url | Web search and data gathering |
-| analysis | `analysis_agent.py` | web_search, execute_python, read_file | Summarization, comparison |
-| generator | `generator_agent.py` | web_search, write_file, read_file, execute_python | Report/document creation |
-| code | `code_agent.py` | execute_python, read_file, write_file, list_files | Calculations, data processing |
-| monitor | `monitor_agent.py` | web_search, scrape_url | Long-running observation |
+| Agent | Implementation | Tools | Purpose |
+|-------|----------------|-------|---------|
+| research | CrewAI (`crewai_agents.py`) | web_search, scrape_url | Web search and data gathering |
+| analysis | CrewAI (`crewai_agents.py`) | web_search, execute_python, read_file | Summarization, comparison |
+| generator | CrewAI (`crewai_agents.py`) | web_search, write_file, read_file, execute_python | Report/document creation |
+| code | CrewAI (`crewai_agents.py`) | execute_python, read_file, write_file, list_files | Calculations, data processing |
+| monitor | CrewAI (`crewai_agents.py`) | web_search, scrape_url | Long-running observation |
 | chat | `chat_agent.py` | (none) | Casual conversation |
+| plan_execute | `plan_execute_agent.py` | planner + CrewAI analysis executor | Complex multi-step tasks |
+| scheduler | `scheduler_agent.py` | scheduler tools | Recurring task scheduling |
 
 ---
 
@@ -116,9 +123,9 @@ class WorkflowState(TypedDict, total=False):
 
 # Key Files
 
-- `services/agents/base_agent.py` -- ReAct agent factory
-- `services/agents/registry.py` -- Agent type → runner mapping
-- `services/agents/*.py` -- Individual agent definitions
-- `shared/mcp/server.py` -- Tool registry (agent type → tools)
+- `services/agents/crewai_agents.py` -- CrewAI crews for research, analysis, generator, code, monitor; `Tool.from_langchain()` converts MCP tools
+- `services/agents/registry.py` -- Agent type → runner mapping (CrewAI runners for sub-agents)
+- `services/agents/chat_agent.py`, `scheduler_agent.py`, `plan_execute_agent.py` -- Non-CrewAI agents
+- `shared/mcp/server.py` -- Tool registry (agent type → LangChain tools)
 - `services/orchestrator/supervisor/nodes/execute.py` -- Agent execution; code-approval agents derived from `TOOL_REGISTRY`
 - `shared/preference_inference.py` -- LLM infers output_format, require_code_approval, clean_message, format_hint

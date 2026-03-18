@@ -64,7 +64,7 @@ Not yet implemented. Planned approach:
 - Store embeddings for semantic search
 - Use pgvector or a dedicated vector DB
 - Integrate with agent context for RAG
-- Module path: `shared/models/embeddings.py` (placeholder exists)
+- Module path: `shared/models/` (to be added when implementing)
 
 ---
 
